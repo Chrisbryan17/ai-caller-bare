@@ -1,0 +1,38 @@
+name: Polymarket Live Wallet Scan
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check requests
+      - name: Download scanner
+        run: |
+          mkdir -p scratch output
+          curl -fsSL 'https://raw.githubusercontent.com/Chrisbryan17/hello-world/polymarket-live-wallet-scan-20260716/scratch/scan_copyable_wallets.py' -o scratch/scan_copyable_wallets.py
+          curl -fsSL 'https://raw.githubusercontent.com/Chrisbryan17/hello-world/polymarket-live-wallet-scan-20260716/scratch/run_scan_v3.py' -o scratch/run_scan_v3.py
+      - name: Run scanner and preserve diagnostics
+        shell: bash
+        run: |
+          set +e
+          python scratch/run_scan_v3.py > output/run.log 2>&1
+          echo $? > output/exit_code.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: polymarket-live-wallet-scan
+          path: output/
+          retention-days: 3
