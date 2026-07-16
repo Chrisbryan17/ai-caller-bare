@@ -22,12 +22,12 @@ jobs:
         run: |
           mkdir -p scratch output
           curl -fsSL 'https://raw.githubusercontent.com/Chrisbryan17/hello-world/polymarket-live-wallet-scan-20260716/scratch/scan_copyable_wallets.py' -o scratch/scan_copyable_wallets.py
-          curl -fsSL 'https://raw.githubusercontent.com/Chrisbryan17/hello-world/polymarket-live-wallet-scan-20260716/scratch/run_scan_v3.py' -o scratch/run_scan_v3.py
+          curl -fsSL 'https://raw.githubusercontent.com/Chrisbryan17/hello-world/polymarket-live-wallet-scan-20260716/scratch/run_scan_v4.py' -o scratch/run_scan_v4.py
       - name: Run scanner and preserve diagnostics
         shell: bash
         run: |
           set +e
-          python scratch/run_scan_v3.py > output/run.log 2>&1
+          python scratch/run_scan_v4.py > output/run.log 2>&1
           echo $? > output/exit_code.txt
           exit 0
       - uses: actions/upload-artifact@v4
