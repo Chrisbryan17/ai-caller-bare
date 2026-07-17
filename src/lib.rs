@@ -3,6 +3,7 @@
 
 mod data_api;
 mod execution;
+mod journal;
 mod model;
 mod risk;
 mod sizing;
@@ -13,6 +14,7 @@ pub mod live;
 
 pub use data_api::*;
 pub use execution::*;
+pub use journal::*;
 pub use model::*;
 pub use risk::*;
 pub use sizing::*;
