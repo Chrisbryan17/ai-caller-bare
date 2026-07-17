@@ -25,6 +25,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           support = Path('src/app_support.rs')
           text = support.read_text()
@@ -34,31 +35,25 @@ jobs:
               '    JournalRecord, JsonlJournal, MarketResolution, PositionSizer, RiskArbiter, RotationContext,\n'
               '    RotationRuntime, SizingConfig, WalletLifecycle, conservative_cent_price,\n',
           )
-          text = text.replace(
-              'use crate::app::AppConfig;\n',
-              'use crate::app::AppConfig;\n\n'
-              '#[cfg(feature = "live-trading")]\n'
-              'use polymarket_copybot::PreflightStatus;\n\n'
-              'pub(crate) struct ActiveSignalContext<\'a> {\n'
-              '    pub config: &\'a AppConfig,\n'
-              '    pub risk: &\'a mut RiskArbiter,\n'
-              '    pub journal: &\'a JsonlJournal,\n'
-              '    pub runtime: &\'a mut RotationRuntime,\n'
-              '    pub open: &\'a mut Option<(String, i64)>,\n'
-              '}\n',
+          if 'pub(crate) struct ActiveSignalContext' not in text:
+              text = text.replace(
+                  'use crate::app::AppConfig;\n',
+                  'use crate::app::AppConfig;\n\n'
+                  '#[cfg(feature = "live-trading")]\n'
+                  'use polymarket_copybot::PreflightStatus;\n\n'
+                  'pub(crate) struct ActiveSignalContext<\'a> {\n'
+                  '    pub config: &\'a AppConfig,\n'
+                  '    pub risk: &\'a mut RiskArbiter,\n'
+                  '    pub journal: &\'a JsonlJournal,\n'
+                  '    pub runtime: &\'a mut RotationRuntime,\n'
+                  '    pub open: &\'a mut Option<(String, i64)>,\n'
+                  '}\n',
+              )
+          pattern = re.compile(
+              r'pub\(crate\) async fn process_active_signal<E: Executor \+ \?Sized>\(.*?\n\) -> Result<\(\)> \{\n',
+              re.S,
           )
-          old_signature = '''pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
-              config: &AppConfig,
-              now: i64,
-              signal: CandidateSignal,
-              risk: &mut RiskArbiter,
-              executor: &E,
-              journal: &JsonlJournal,
-              runtime: &mut RotationRuntime,
-              open: &mut Option<(String, i64)>,
-          ) -> Result<()> {
-          '''
-          new_signature = '''pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
+          replacement = '''pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
               now: i64,
               signal: CandidateSignal,
               executor: &E,
@@ -72,14 +67,15 @@ jobs:
                   open,
               } = context;
           '''
-          if old_signature not in text:
-              raise SystemExit('active signal signature did not match')
-          text = text.replace(old_signature, new_signature)
-          text = text.replace(
-              'pub(crate) fn log_preflight(preflight: &PreflightStatus) {',
-              '#[cfg(feature = "live-trading")]\n'
-              'pub(crate) fn log_preflight(preflight: &PreflightStatus) {',
-          )
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'active signal signature replacements={count}')
+          if '#[cfg(feature = "live-trading")]\npub(crate) fn log_preflight' not in text:
+              text = text.replace(
+                  'pub(crate) fn log_preflight(preflight: &PreflightStatus) {',
+                  '#[cfg(feature = "live-trading")]\n'
+                  'pub(crate) fn log_preflight(preflight: &PreflightStatus) {',
+              )
           support.write_text(text)
 
           app = Path('src/app.rs')
@@ -96,60 +92,42 @@ jobs:
               '    process_active_signal, process_shadow_signal, retry_after_map,\n'
               '};\n',
           )
-          old_paper = '''                    process_active_signal(
-                              &config,
-                              now,
-                              signal,
-                              &mut risk,
-                              &paper_executor,
-                              &journal,
-                              &mut runtime,
-                              &mut open,
-                          )
-          '''
-          new_paper = '''                    process_active_signal(
-                              now,
-                              signal,
-                              &paper_executor,
-                              ActiveSignalContext {
-                                  config: &config,
-                                  risk: &mut risk,
-                                  journal: &journal,
-                                  runtime: &mut runtime,
-                                  open: &mut open,
-                              },
-                          )
-          '''
-          if old_paper not in text:
-              raise SystemExit('paper execution call did not match')
-          text = text.replace(old_paper, new_paper)
-          old_live = '''                        process_active_signal(
-                                  &config,
-                                  now,
-                                  signal,
-                                  &mut risk,
-                                  executor,
-                                  &journal,
-                                  &mut runtime,
-                                  &mut open,
-                              )
-          '''
-          new_live = '''                        process_active_signal(
-                                  now,
-                                  signal,
-                                  executor,
-                                  ActiveSignalContext {
-                                      config: &config,
-                                      risk: &mut risk,
-                                      journal: &journal,
-                                      runtime: &mut runtime,
-                                      open: &mut open,
-                                  },
-                              )
-          '''
-          if old_live not in text:
-              raise SystemExit('live execution call did not match')
-          text = text.replace(old_live, new_live)
+          paper_pattern = re.compile(
+              r'process_active_signal\(\s*&config,\s*now,\s*signal,\s*&mut risk,\s*&paper_executor,\s*&journal,\s*&mut runtime,\s*&mut open,\s*\)',
+              re.S,
+          )
+          paper_replacement = '''process_active_signal(
+              now,
+              signal,
+              &paper_executor,
+              ActiveSignalContext {
+                  config: &config,
+                  risk: &mut risk,
+                  journal: &journal,
+                  runtime: &mut runtime,
+                  open: &mut open,
+              },
+          )'''
+          text, paper_count = paper_pattern.subn(paper_replacement, text, count=1)
+          live_pattern = re.compile(
+              r'process_active_signal\(\s*&config,\s*now,\s*signal,\s*&mut risk,\s*executor,\s*&journal,\s*&mut runtime,\s*&mut open,\s*\)',
+              re.S,
+          )
+          live_replacement = '''process_active_signal(
+              now,
+              signal,
+              executor,
+              ActiveSignalContext {
+                  config: &config,
+                  risk: &mut risk,
+                  journal: &journal,
+                  runtime: &mut runtime,
+                  open: &mut open,
+              },
+          )'''
+          text, live_count = live_pattern.subn(live_replacement, text, count=1)
+          if paper_count != 1 or live_count != 1:
+              raise SystemExit(f'call replacements paper={paper_count} live={live_count}')
           app.write_text(text)
           PY
           cargo fmt --all
