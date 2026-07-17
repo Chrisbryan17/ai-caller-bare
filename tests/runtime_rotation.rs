@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use polymarket_copybot::{
-    CandidateEvaluation, ExecutionFill, MarketResolution, Outcome, ReplayMetrics, RotationContext,
-    RotationRuntime, StrategyFamily, Trade, WalletLifecycle,
+    CandidateEvaluation, ExecutionFill, MAX_WATCHED_WALLETS, MarketResolution, Outcome,
+    ReplayMetrics, RotationContext, RotationRuntime, StrategyFamily, Trade, WalletLifecycle,
 };
 use rust_decimal_macros::dec;
 use tempfile::tempdir;
@@ -173,4 +173,17 @@ fn resolved_shadow_position_updates_wallet_and_global_paper_ledgers() {
             .resolved_positions,
         1
     );
+}
+
+#[test]
+fn watcher_pool_is_capped_to_preserve_the_public_trade_rate_budget() {
+    let dir = tempdir().unwrap();
+    let mut runtime =
+        RotationRuntime::open(dir.path().join("registry.json"), dec!(95), 1_000).unwrap();
+    let evaluations = (0..6)
+        .map(|index| evaluation(&format!("wallet-{index}")))
+        .collect();
+    runtime.apply_evaluations(evaluations, 1_000).unwrap();
+    assert_eq!(MAX_WATCHED_WALLETS, 4);
+    assert_eq!(runtime.watched_wallets().len(), MAX_WATCHED_WALLETS);
 }
