@@ -79,19 +79,25 @@ pub struct RiskArbiter {
 
 impl RiskArbiter {
     pub fn new(config: RiskConfig) -> Result<Self> {
+        Self::new_with_daily(config, Decimal::ZERO)
+    }
+
+    pub fn new_with_daily(config: RiskConfig, daily: Decimal) -> Result<Self> {
         if config.minimum_lead_seconds < 0
             || config.max_open_markets == 0
             || config.max_daily_capital_at_risk <= Decimal::ZERO
+            || daily < Decimal::ZERO
+            || daily > config.max_daily_capital_at_risk
         {
             return Err(CopybotError::InvalidConfiguration(
-                "invalid risk configuration".into(),
+                "invalid risk configuration or persisted daily risk".into(),
             ));
         }
         Ok(Self {
             config,
             open: HashSet::new(),
             outcomes: HashMap::new(),
-            daily: Decimal::ZERO,
+            daily,
         })
     }
 
@@ -122,6 +128,31 @@ impl RiskArbiter {
         Ok(())
     }
 
+    pub fn restore_open(&mut self, condition: &str, outcome: Outcome) -> Result<()> {
+        let condition = condition.trim();
+        if condition.is_empty() {
+            return Err(CopybotError::InvalidConfiguration(
+                "restored condition id cannot be empty".into(),
+            ));
+        }
+        if let Some(existing) = self.outcomes.get(condition) {
+            if *existing == outcome && self.open.contains(condition) {
+                return Ok(());
+            }
+            return Err(CopybotError::InvalidConfiguration(
+                "restored position conflicts with existing risk state".into(),
+            ));
+        }
+        if self.open.len() >= self.config.max_open_markets {
+            return Err(CopybotError::InvalidConfiguration(
+                "restored positions exceed maximum open markets".into(),
+            ));
+        }
+        self.outcomes.insert(condition.to_owned(), outcome);
+        self.open.insert(condition.to_owned());
+        Ok(())
+    }
+
     pub fn record_capital_at_risk(
         &mut self,
         condition: &str,
@@ -142,12 +173,17 @@ impl RiskArbiter {
         if !counts_daily_risk {
             return Ok(());
         }
-        if self.daily + amount > self.config.max_daily_capital_at_risk {
+        if amount <= Decimal::ZERO || self.daily + amount > self.config.max_daily_capital_at_risk {
             self.release(condition);
             return Err(RiskReject::DailyRiskLimit);
         }
         self.daily += amount;
         Ok(())
+    }
+
+    #[must_use]
+    pub fn daily_capital_at_risk(&self) -> Decimal {
+        self.daily
     }
 
     /// Releases active exposure while retaining the selected direction until the market finishes.
