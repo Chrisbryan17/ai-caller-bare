@@ -59,9 +59,7 @@ fn discovered_wallet_is_quarantined_and_first_snapshot_only_primes() {
         RotationRuntime::open(dir.path().join("registry.json"), dec!(95), 1_000).unwrap();
     runtime
         .apply_evaluations(
-            vec![evaluation(
-                "0x1111111111111111111111111111111111111111",
-            )],
+            vec![evaluation("0x1111111111111111111111111111111111111111")],
             1_000,
         )
         .unwrap();
@@ -103,9 +101,7 @@ fn qualified_rotation_is_deferred_while_position_is_open() {
         RotationRuntime::open(dir.path().join("registry.json"), dec!(95), 1_000).unwrap();
     runtime
         .apply_evaluations(
-            vec![evaluation(
-                "0x1111111111111111111111111111111111111111",
-            )],
+            vec![evaluation("0x1111111111111111111111111111111111111111")],
             1_000,
         )
         .unwrap();

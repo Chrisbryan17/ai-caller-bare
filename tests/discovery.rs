@@ -74,9 +74,7 @@ async fn discovery_deduplicates_periods_and_evaluates_active_wallet() {
     }
     Mock::given(method("GET"))
         .and(path("/trades"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(trades_json(), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(trades_json(), "application/json"))
         .mount(&data)
         .await;
     Mock::given(method("GET"))
