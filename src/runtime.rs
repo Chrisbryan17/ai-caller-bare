@@ -45,6 +45,15 @@ pub struct ActivePosition {
     pub market_end_epoch: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingLiveSubmission {
+    pub wallet: String,
+    pub condition_id: String,
+    pub outcome: Outcome,
+    pub observed_epoch: i64,
+    pub market_end_epoch: i64,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct PersistedLiveRisk {
     utc_day: i64,
@@ -58,6 +67,8 @@ struct PersistedRuntimeState {
     positions: Vec<PaperPosition>,
     #[serde(default)]
     live_risk: PersistedLiveRisk,
+    #[serde(default)]
+    pending_live_submission: Option<PendingLiveSubmission>,
 }
 
 pub struct RotationRuntime {
@@ -67,6 +78,7 @@ pub struct RotationRuntime {
     launch_controller: LaunchController,
     positions: Vec<PaperPosition>,
     live_risk: PersistedLiveRisk,
+    pending_live_submission: Option<PendingLiveSubmission>,
     runtime_state_path: PathBuf,
 }
 
@@ -80,16 +92,25 @@ impl RotationRuntime {
         let runtime_state_path = registry_path.with_extension("runtime.json");
         let registry = WalletRegistry::load_or_new(&registry_path, bankroll)?;
         let persisted = load_runtime_state(&runtime_state_path)?;
-        let (launch_controller, positions, live_risk) = persisted.map_or_else(
-            || {
-                (
-                    LaunchController::new(started_epoch, bankroll),
-                    Vec::new(),
-                    PersistedLiveRisk::default(),
-                )
-            },
-            |state| (state.launch_controller, state.positions, state.live_risk),
-        );
+        let (launch_controller, positions, live_risk, pending_live_submission) = persisted
+            .map_or_else(
+                || {
+                    (
+                        LaunchController::new(started_epoch, bankroll),
+                        Vec::new(),
+                        PersistedLiveRisk::default(),
+                        None,
+                    )
+                },
+                |state| {
+                    (
+                        state.launch_controller,
+                        state.positions,
+                        state.live_risk,
+                        state.pending_live_submission,
+                    )
+                },
+            );
         if live_risk.capital_at_risk < Decimal::ZERO
             || live_risk.capital_at_risk > registry.state().daily_capital_at_risk_limit
         {
@@ -104,8 +125,10 @@ impl RotationRuntime {
             launch_controller,
             positions,
             live_risk,
+            pending_live_submission,
             runtime_state_path,
         };
+        runtime.validate_persisted_exposure()?;
         runtime.synchronize_watchers()?;
         Ok(runtime)
     }
@@ -139,22 +162,98 @@ impl RotationRuntime {
     }
 
     pub fn active_position(&self, now: i64) -> Result<Option<ActivePosition>> {
-        let active: Vec<&PaperPosition> = self
+        let mut active: Option<ActivePosition> = None;
+        for position in self
             .positions
             .iter()
             .filter(|position| position.market_end_epoch > now)
             .filter(|position| position.live || position.counts_global)
-            .collect();
-        if active.len() > 1 {
+        {
+            merge_active_position(
+                &mut active,
+                ActivePosition {
+                    condition_id: position.fill.condition_id.clone(),
+                    outcome: position.fill.outcome,
+                    market_end_epoch: position.market_end_epoch,
+                },
+            )?;
+        }
+        if let Some(pending) = &self.pending_live_submission
+            && pending.market_end_epoch > now
+        {
+            merge_active_position(
+                &mut active,
+                ActivePosition {
+                    condition_id: pending.condition_id.clone(),
+                    outcome: pending.outcome,
+                    market_end_epoch: pending.market_end_epoch,
+                },
+            )?;
+        }
+        Ok(active)
+    }
+
+    pub fn reserve_live_submission(
+        &mut self,
+        wallet: &str,
+        condition_id: &str,
+        outcome: Outcome,
+        observed_epoch: i64,
+        market_end_epoch: i64,
+    ) -> Result<()> {
+        let wallet = wallet.trim().to_ascii_lowercase();
+        let condition_id = condition_id.trim().to_owned();
+        if wallet.is_empty() || condition_id.is_empty() || market_end_epoch <= observed_epoch {
             return Err(CopybotError::InvalidConfiguration(
-                "persisted runtime contains multiple active positions".into(),
+                "invalid pending live submission".into(),
             ));
         }
-        Ok(active.first().map(|position| ActivePosition {
-            condition_id: position.fill.condition_id.clone(),
-            outcome: position.fill.outcome,
-            market_end_epoch: position.market_end_epoch,
-        }))
+        if self.positions.iter().any(|position| {
+            position.market_end_epoch > observed_epoch && (position.live || position.counts_global)
+        }) {
+            return Err(CopybotError::InvalidConfiguration(
+                "cannot submit while another active position is persisted".into(),
+            ));
+        }
+        if let Some(existing) = &self.pending_live_submission {
+            if existing.market_end_epoch <= observed_epoch {
+                self.pending_live_submission = None;
+            } else if existing.wallet == wallet
+                && existing.condition_id == condition_id
+                && existing.outcome == outcome
+                && existing.market_end_epoch == market_end_epoch
+            {
+                return Ok(());
+            } else {
+                return Err(CopybotError::InvalidConfiguration(
+                    "another live submission is already pending".into(),
+                ));
+            }
+        }
+        self.pending_live_submission = Some(PendingLiveSubmission {
+            wallet,
+            condition_id,
+            outcome,
+            observed_epoch,
+            market_end_epoch,
+        });
+        self.save_runtime_state()
+    }
+
+    pub fn clear_expired_live_submission(
+        &mut self,
+        now: i64,
+    ) -> Result<Option<PendingLiveSubmission>> {
+        if self
+            .pending_live_submission
+            .as_ref()
+            .is_some_and(|pending| pending.market_end_epoch <= now)
+        {
+            let cleared = self.pending_live_submission.take();
+            self.save_runtime_state()?;
+            return Ok(cleared);
+        }
+        Ok(None)
     }
 
     pub fn persist_live_daily_capital_at_risk(
@@ -272,19 +371,27 @@ impl RotationRuntime {
             ));
         }
         let wallet = wallet.to_ascii_lowercase();
-        if self.positions.iter().any(|position| {
-            position.wallet == wallet && position.fill.condition_id == fill.condition_id
-        }) {
-            return Ok(());
-        }
-        self.positions.push(PaperPosition {
-            wallet,
-            market_end_epoch,
-            counts_global: false,
-            live: true,
-            fill,
+        let condition_id = fill.condition_id.clone();
+        let duplicate = self.positions.iter().any(|position| {
+            position.wallet == wallet && position.fill.condition_id == condition_id
         });
-        self.sort_positions();
+        if !duplicate {
+            self.positions.push(PaperPosition {
+                wallet,
+                market_end_epoch,
+                counts_global: false,
+                live: true,
+                fill,
+            });
+            self.sort_positions();
+        }
+        if self
+            .pending_live_submission
+            .as_ref()
+            .is_some_and(|pending| pending.condition_id == condition_id)
+        {
+            self.pending_live_submission = None;
+        }
         self.save_runtime_state()
     }
 
@@ -376,6 +483,20 @@ impl RotationRuntime {
         self.resolve_positions(resolutions, now)
     }
 
+    fn validate_persisted_exposure(&self) -> Result<()> {
+        let active_positions = self
+            .positions
+            .iter()
+            .filter(|position| position.live || position.counts_global)
+            .count();
+        if active_positions > 1 {
+            return Err(CopybotError::InvalidConfiguration(
+                "persisted runtime contains multiple globally active positions".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn sort_positions(&mut self) {
         self.positions.sort_by(|left, right| {
             (left.market_end_epoch, &left.wallet, &left.fill.condition_id).cmp(&(
@@ -447,6 +568,7 @@ impl RotationRuntime {
             launch_controller: self.launch_controller.clone(),
             positions: self.positions.clone(),
             live_risk: self.live_risk.clone(),
+            pending_live_submission: self.pending_live_submission.clone(),
         };
         let encoded = serde_json::to_vec_pretty(&state)?;
         let mut file = File::create(&temporary)?;
@@ -454,6 +576,28 @@ impl RotationRuntime {
         file.sync_all()?;
         fs::rename(temporary, &self.runtime_state_path)?;
         Ok(())
+    }
+}
+
+fn merge_active_position(
+    current: &mut Option<ActivePosition>,
+    candidate: ActivePosition,
+) -> Result<()> {
+    match current {
+        None => {
+            *current = Some(candidate);
+            Ok(())
+        }
+        Some(existing)
+            if existing.condition_id == candidate.condition_id
+                && existing.outcome == candidate.outcome
+                && existing.market_end_epoch == candidate.market_end_epoch =>
+        {
+            Ok(())
+        }
+        Some(_) => Err(CopybotError::InvalidConfiguration(
+            "persisted runtime contains multiple active positions".into(),
+        )),
     }
 }
 
