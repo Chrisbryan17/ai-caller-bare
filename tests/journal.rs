@@ -1,6 +1,4 @@
-use polymarket_copybot::{
-    ExecutionFill, JournalRecord, JsonlJournal, Outcome,
-};
+use polymarket_copybot::{ExecutionFill, JournalRecord, JsonlJournal, Outcome};
 use rust_decimal_macros::dec;
 
 #[tokio::test]

@@ -325,9 +325,7 @@ async fn executor(args: &Args) -> Result<Box<dyn Executor>> {
             #[cfg(feature = "live-trading")]
             {
                 let private_key = std::env::var("POLYMARKET_PRIVATE_KEY").map_err(|_| {
-                    anyhow::anyhow!(
-                        "POLYMARKET_PRIVATE_KEY is required; never paste it into chat"
-                    )
+                    anyhow::anyhow!("POLYMARKET_PRIVATE_KEY is required; never paste it into chat")
                 })?;
                 Ok(Box::new(
                     polymarket_copybot::live::connect_eoa(&private_key).await?,

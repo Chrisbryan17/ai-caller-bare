@@ -73,9 +73,7 @@ impl PositionSizer {
                 config.estimated_win_probability,
             ));
         }
-        if config.kelly_multiplier <= Decimal::ZERO
-            || config.kelly_multiplier > Decimal::ONE
-        {
+        if config.kelly_multiplier <= Decimal::ZERO || config.kelly_multiplier > Decimal::ONE {
             return Err(CopybotError::InvalidConfiguration(
                 "kelly multiplier must be in (0,1]".into(),
             ));
@@ -87,9 +85,7 @@ impl PositionSizer {
                 "risk cap must be in (0,1]".into(),
             ));
         }
-        if config.minimum_shares <= Decimal::ZERO
-            || !config.minimum_shares.fract().is_zero()
-        {
+        if config.minimum_shares <= Decimal::ZERO || !config.minimum_shares.fract().is_zero() {
             return Err(CopybotError::InvalidConfiguration(
                 "minimum shares must be a positive integer".into(),
             ));

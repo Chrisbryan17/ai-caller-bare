@@ -23,8 +23,5 @@ fn exact_acknowledgement_still_requires_compile_time_live_feature() {
     #[cfg(feature = "live-trading")]
     assert!(result.is_ok());
     #[cfg(not(feature = "live-trading"))]
-    assert!(matches!(
-        result,
-        Err(CopybotError::LiveTradingNotCompiled)
-    ));
+    assert!(matches!(result, Err(CopybotError::LiveTradingNotCompiled)));
 }

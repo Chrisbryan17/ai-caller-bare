@@ -1,6 +1,4 @@
-use polymarket_copybot::{
-    StrategyConfig, StrategyEngine, Trade, WalletWatcher,
-};
+use polymarket_copybot::{StrategyConfig, StrategyEngine, Trade, WalletWatcher};
 use rust_decimal_macros::dec;
 
 fn trade(condition: &str, timestamp: i64, tx: &str) -> Trade {
@@ -29,9 +27,19 @@ fn first_successful_snapshot_primes_without_copying_history() {
     });
     let mut watcher = WalletWatcher::new(engine, 100).unwrap();
     assert!(!watcher.is_primed());
-    assert!(watcher.process_snapshot(vec![trade("old", 1_784_241_950, "a")]).unwrap().is_empty());
+    assert!(
+        watcher
+            .process_snapshot(vec![trade("old", 1_784_241_950, "a")])
+            .unwrap()
+            .is_empty()
+    );
     assert!(watcher.is_primed());
-    assert!(watcher.process_snapshot(vec![trade("old", 1_784_241_950, "a")]).unwrap().is_empty());
+    assert!(
+        watcher
+            .process_snapshot(vec![trade("old", 1_784_241_950, "a")])
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -43,12 +51,21 @@ fn new_market_after_priming_can_emit_exactly_once() {
         estimated_win_probability: dec!(0.60),
     });
     let mut watcher = WalletWatcher::new(engine, 100).unwrap();
-    watcher.process_snapshot(vec![trade("old", 1_784_241_950, "a")]).unwrap();
-    let signals = watcher.process_snapshot(vec![
-        trade("old", 1_784_241_950, "a"),
-        trade("new", 1_784_241_960, "b"),
-    ]).unwrap();
+    watcher
+        .process_snapshot(vec![trade("old", 1_784_241_950, "a")])
+        .unwrap();
+    let signals = watcher
+        .process_snapshot(vec![
+            trade("old", 1_784_241_950, "a"),
+            trade("new", 1_784_241_960, "b"),
+        ])
+        .unwrap();
     assert_eq!(signals.len(), 1);
     assert_eq!(signals[0].condition_id, "new");
-    assert!(watcher.process_snapshot(vec![trade("new", 1_784_241_960, "b")]).unwrap().is_empty());
+    assert!(
+        watcher
+            .process_snapshot(vec![trade("new", 1_784_241_960, "b")])
+            .unwrap()
+            .is_empty()
+    );
 }

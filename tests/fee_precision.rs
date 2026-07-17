@@ -1,12 +1,13 @@
-use polymarket_copybot::{
-    PositionSizer, SizingConfig, crypto_taker_fee,
-};
+use polymarket_copybot::{PositionSizer, SizingConfig, crypto_taker_fee};
 use rust_decimal_macros::dec;
 
 #[test]
 fn transaction_fee_is_rounded_to_five_decimal_places() {
     assert_eq!(crypto_taker_fee(dec!(100), dec!(0.50)).unwrap(), dec!(1.75));
-    assert_eq!(crypto_taker_fee(dec!(10), dec!(0.41)).unwrap(), dec!(0.16933));
+    assert_eq!(
+        crypto_taker_fee(dec!(10), dec!(0.41)).unwrap(),
+        dec!(0.16933)
+    );
     assert_eq!(crypto_taker_fee(dec!(0.0001), dec!(0.01)).unwrap(), dec!(0));
 }
 

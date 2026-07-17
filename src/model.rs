@@ -53,10 +53,7 @@ where
     }
     match Wire::deserialize(d)? {
         Wire::String(v) => v.parse().map_err(serde::de::Error::custom),
-        Wire::Number(v) => v
-            .to_string()
-            .parse()
-            .map_err(serde::de::Error::custom),
+        Wire::Number(v) => v.to_string().parse().map_err(serde::de::Error::custom),
     }
 }
 
@@ -90,9 +87,8 @@ pub struct MarketWindow {
 
 pub fn parse_market_window(slug: &str) -> Result<MarketWindow> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"^(btc|eth|sol|xrp)-updown-(5m|15m)-(\d{10})$").unwrap()
-    });
+    let re =
+        RE.get_or_init(|| Regex::new(r"^(btc|eth|sol|xrp)-updown-(5m|15m)-(\d{10})$").unwrap());
     let c = re
         .captures(slug)
         .ok_or_else(|| CopybotError::InvalidSlug(slug.into()))?;

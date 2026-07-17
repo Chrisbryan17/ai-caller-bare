@@ -2,9 +2,7 @@ use std::collections::HashMap;
 
 use rust_decimal::Decimal;
 
-use crate::{
-    CandidateSignal, CopybotError, Outcome, Result, Trade, parse_market_window,
-};
+use crate::{CandidateSignal, CopybotError, Outcome, Result, Trade, parse_market_window};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StrategyConfig {
@@ -80,8 +78,8 @@ impl StrategyEngine {
                 minimum_lead_seconds,
                 estimated_win_probability,
                 ..
-            } => (t.size * t.price >= *minimum_notional && lead >= *minimum_lead_seconds)
-                .then(|| {
+            } => (t.size * t.price >= *minimum_notional && lead >= *minimum_lead_seconds).then(
+                || {
                     signal(
                         t,
                         outcome,
@@ -89,7 +87,8 @@ impl StrategyEngine {
                         "first_large_buy",
                         *estimated_win_probability,
                     )
-                }),
+                },
+            ),
             StrategyConfig::ConfirmedFlow {
                 minimum_cumulative_notional,
                 minimum_directional_share,
