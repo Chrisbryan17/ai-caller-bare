@@ -128,7 +128,7 @@ impl RotationRuntime {
             pending_live_submission,
             runtime_state_path,
         };
-        runtime.validate_persisted_exposure()?;
+        runtime.validate_persisted_exposure(started_epoch)?;
         runtime.synchronize_watchers()?;
         Ok(runtime)
     }
@@ -483,10 +483,11 @@ impl RotationRuntime {
         self.resolve_positions(resolutions, now)
     }
 
-    fn validate_persisted_exposure(&self) -> Result<()> {
+    fn validate_persisted_exposure(&self, now: i64) -> Result<()> {
         let active_positions = self
             .positions
             .iter()
+            .filter(|position| position.market_end_epoch > now)
             .filter(|position| position.live || position.counts_global)
             .count();
         if active_positions > 1 {
