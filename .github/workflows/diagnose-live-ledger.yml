@@ -1,0 +1,45 @@
+name: Diagnose Resolved Live Loss Ledger
+
+on:
+  push:
+    branches:
+      - polymarket-copybot-final-20260716-done
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: polymarket-copybot-final-20260716-done
+      - name: Capture exact patch assertion
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/apply-live-ledger.yml').read_text()
+          start = workflow.index("          python - <<'PY'\n") + len("          python - <<'PY'\n")
+          end = workflow.index("\n          PY", start)
+          lines = workflow[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          Path('/tmp/apply_live_ledger.py').write_text(script + '\n')
+          PY
+          set +e
+          python /tmp/apply_live_ledger.py > /tmp/live-ledger-patch.log 2>&1
+          echo "$?" > /tmp/live-ledger-patch.status
+          cat /tmp/live-ledger-patch.log
+          exit 0
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-ledger-patch-diagnostics
+          path: |
+            /tmp/live-ledger-patch.log
+            /tmp/live-ledger-patch.status
+          if-no-files-found: error
