@@ -50,3 +50,26 @@ fn daily_risk_limit_blocks_then_explicit_reset_reopens_budget() {
     risk.reserve(&candidate("c3"), 1_000).unwrap();
     risk.record_capital_at_risk("c3", dec!(6)).unwrap();
 }
+
+#[test]
+fn finished_market_is_forgotten_but_simple_release_preserves_conflict_history() {
+    let mut risk = RiskArbiter::new(RiskConfig {
+        minimum_lead_seconds: 90,
+        max_open_markets: 1,
+        max_daily_capital_at_risk: dec!(12),
+    })
+    .unwrap();
+    let first = candidate("same");
+    risk.reserve(&first, 1_000).unwrap();
+    risk.release("same");
+
+    let mut opposite = candidate("same");
+    opposite.outcome = Outcome::Down;
+    assert_eq!(
+        risk.reserve(&opposite, 1_000).unwrap_err(),
+        RiskReject::ConflictingOutcome
+    );
+
+    risk.forget_market("same");
+    risk.reserve(&opposite, 1_000).unwrap();
+}
