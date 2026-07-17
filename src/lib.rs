@@ -9,6 +9,7 @@ mod model;
 mod risk;
 mod sizing;
 mod strategy;
+mod watcher;
 
 #[cfg(feature = "live-trading")]
 pub mod live;
@@ -21,3 +22,4 @@ pub use model::*;
 pub use risk::*;
 pub use sizing::*;
 pub use strategy::*;
+pub use watcher::*;
