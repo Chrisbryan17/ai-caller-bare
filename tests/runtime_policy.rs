@@ -1,4 +1,6 @@
-use polymarket_copybot::{ExecutionRoute, LaunchMode, WalletLifecycle, execution_route};
+use polymarket_copybot::{
+    DEFAULT_CLOB_API_BASE, ExecutionRoute, LaunchMode, WalletLifecycle, execution_route,
+};
 
 #[test]
 fn unqualified_wallets_are_always_shadow_paper_only() {
@@ -52,4 +54,9 @@ fn halted_mode_never_routes_to_live() {
         execution_route(WalletLifecycle::ActiveLive, true, LaunchMode::Halted, true),
         ExecutionRoute::Ignore
     );
+}
+
+#[test]
+fn production_clob_default_uses_current_host() {
+    assert_eq!(DEFAULT_CLOB_API_BASE, "https://clob.polymarket.com");
 }
