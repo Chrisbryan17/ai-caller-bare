@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
@@ -15,6 +15,7 @@ use crate::{
 };
 
 const RUNTIME_SCHEMA_VERSION: u32 = 1;
+pub const MAX_WATCHED_WALLETS: usize = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PaperPosition {
@@ -256,6 +257,13 @@ impl RotationRuntime {
     }
 
     fn synchronize_watchers(&mut self) -> Result<()> {
+        let active: HashSet<String> = self
+            .registry
+            .state()
+            .active_wallets
+            .iter()
+            .map(|wallet| wallet.to_ascii_lowercase())
+            .collect();
         let mut records: Vec<_> = self
             .registry
             .state()
@@ -271,15 +279,32 @@ impl RotationRuntime {
                 )
             })
             .filter_map(|record| {
-                record.family.map(|family| WatcherSpec {
-                    wallet: record.wallet.clone(),
-                    family,
-                    estimated_win_probability: record.estimated_win_probability,
+                record.family.map(|family| {
+                    (
+                        active.contains(&record.wallet),
+                        record.score(),
+                        WatcherSpec {
+                            wallet: record.wallet.clone(),
+                            family,
+                            estimated_win_probability: record.estimated_win_probability,
+                        },
+                    )
                 })
             })
             .collect();
-        records.sort_by(|left, right| left.wallet.cmp(&right.wallet));
-        self.watchers.synchronize(&records)
+        records.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| right.1.cmp(&left.1))
+                .then_with(|| left.2.wallet.cmp(&right.2.wallet))
+        });
+        let specs: Vec<WatcherSpec> = records
+            .into_iter()
+            .take(MAX_WATCHED_WALLETS)
+            .map(|(_, _, spec)| spec)
+            .collect();
+        self.watchers.synchronize(&specs)
     }
 
     fn save_runtime_state(&self) -> Result<()> {
