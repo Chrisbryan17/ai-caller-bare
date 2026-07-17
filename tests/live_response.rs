@@ -23,6 +23,7 @@ fn signal() -> CandidateSignal {
 fn successful_limit_buy_uses_server_making_and_taking_amounts() {
     let fill = validated_live_buy_fill(
         signal(),
+        dec!(0.41),
         PostedBuySummary {
             success: true,
             error_msg: None,
@@ -67,15 +68,15 @@ fn live_response_rejects_false_success_error_text_and_zero_fill() {
         },
     ] {
         assert!(matches!(
-            validated_live_buy_fill(signal(), summary),
+            validated_live_buy_fill(signal(), dec!(0.41), summary),
             Err(CopybotError::LiveExecution(_))
         ));
     }
 }
 
 #[test]
-fn live_response_rejects_fill_price_outside_binary_range() {
-    let summary = PostedBuySummary {
+fn live_response_rejects_fill_price_outside_binary_range_or_above_cap() {
+    let invalid_binary = PostedBuySummary {
         success: true,
         error_msg: None,
         making_amount: dec!(12),
@@ -83,7 +84,19 @@ fn live_response_rejects_fill_price_outside_binary_range() {
         order_id: "bad-price".into(),
     };
     assert!(matches!(
-        validated_live_buy_fill(signal(), summary),
+        validated_live_buy_fill(signal(), dec!(0.99), invalid_binary),
         Err(CopybotError::InvalidPrice(_))
+    ));
+
+    let above_cap = PostedBuySummary {
+        success: true,
+        error_msg: None,
+        making_amount: dec!(4.2),
+        taking_amount: dec!(10),
+        order_id: "above-cap".into(),
+    };
+    assert!(matches!(
+        validated_live_buy_fill(signal(), dec!(0.41), above_cap),
+        Err(CopybotError::LiveExecution(_))
     ));
 }
