@@ -15,7 +15,7 @@ use crate::{
     PreflightStatus, Result, validated_live_buy_fill,
 };
 
-pub const PRODUCTION_CLOB_HOST: &str = "https://clob.polymarket.com";
+pub const PRODUCTION_CLOB_HOST: &str = "https://clob-v2.polymarket.com";
 
 pub struct LiveExecutor<S: Signer> {
     signer: S,
