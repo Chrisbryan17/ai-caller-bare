@@ -127,8 +127,20 @@ impl RiskArbiter {
         condition: &str,
         amount: Decimal,
     ) -> std::result::Result<(), RiskReject> {
+        self.record_capital_at_risk_for_mode(condition, amount, true)
+    }
+
+    pub fn record_capital_at_risk_for_mode(
+        &mut self,
+        condition: &str,
+        amount: Decimal,
+        counts_daily_risk: bool,
+    ) -> std::result::Result<(), RiskReject> {
         if !self.open.contains(condition) {
             return Err(RiskReject::DuplicateMarket);
+        }
+        if !counts_daily_risk {
+            return Ok(());
         }
         if self.daily + amount > self.config.max_daily_capital_at_risk {
             self.release(condition);

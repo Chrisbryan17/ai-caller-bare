@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use app::{AppConfig, RunMode};
 use clap::{Parser, ValueEnum};
-use polymarket_copybot::validate_live_ack;
+use polymarket_copybot::{DEFAULT_CLOB_API_BASE, validate_live_ack};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tracing_subscriber::EnvFilter;
@@ -61,7 +61,7 @@ struct Args {
     data_api_base: String,
     #[arg(long, default_value = "https://gamma-api.polymarket.com")]
     gamma_api_base: String,
-    #[arg(long, default_value = "https://clob-v2.polymarket.com")]
+    #[arg(long, default_value = DEFAULT_CLOB_API_BASE)]
     clob_api_base: String,
     #[arg(long, default_value = "state/wallet-registry.json")]
     registry: PathBuf,

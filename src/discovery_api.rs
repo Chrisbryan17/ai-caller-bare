@@ -158,10 +158,13 @@ impl DiscoveryApiClient {
             if chunk.is_empty() {
                 continue;
             }
-            let params: Vec<(&str, &str)> = chunk
-                .iter()
-                .map(|condition| ("condition_ids", condition.as_str()))
-                .collect();
+            let mut params: Vec<(&str, String)> =
+                vec![("closed", "true".into()), ("limit", "50".into())];
+            params.extend(
+                chunk
+                    .iter()
+                    .map(|condition| ("condition_ids", condition.clone())),
+            );
             let response = self
                 .client
                 .get(format!("{}/markets", self.gamma_api_base))

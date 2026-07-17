@@ -1,6 +1,9 @@
 //! Paper-first low-latency Polymarket copy-trading engine.
 //! Live order submission is compile-time and runtime gated.
 
+/// Current production Polymarket CLOB API base.
+pub const DEFAULT_CLOB_API_BASE: &str = "https://clob.polymarket.com";
+
 mod coordinator;
 mod data_api;
 mod discovery;

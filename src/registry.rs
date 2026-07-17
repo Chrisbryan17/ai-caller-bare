@@ -62,6 +62,8 @@ pub struct WalletRecord {
     pub paper_peak_pnl: Decimal,
     pub paper_max_drawdown: Decimal,
     pub paper_consecutive_losses: usize,
+    #[serde(default)]
+    pub paper_max_loss_streak: usize,
     pub paper_processing_errors: usize,
     pub paper_outcomes: Vec<PaperOutcome>,
     pub suspension_reason: Option<SuspensionReason>,
@@ -85,6 +87,7 @@ impl WalletRecord {
             paper_peak_pnl: Decimal::ZERO,
             paper_max_drawdown: Decimal::ZERO,
             paper_consecutive_losses: 0,
+            paper_max_loss_streak: 0,
             paper_processing_errors: 0,
             paper_outcomes: Vec::new(),
             suspension_reason: None,
@@ -175,30 +178,47 @@ impl WalletRegistry {
 
     pub fn upsert_evaluation(&mut self, evaluation: CandidateEvaluation, now: i64) {
         let wallet = evaluation.wallet.to_ascii_lowercase();
-        let record = self
-            .state
-            .records
-            .entry(wallet.clone())
-            .or_insert_with(|| WalletRecord::new(wallet));
-        record.family = Some(evaluation.family);
-        record.estimated_win_probability = evaluation.estimated_win_probability;
-        record.evaluation = Some(evaluation.clone());
-        if evaluation.eligible {
-            if matches!(
-                record.lifecycle,
-                WalletLifecycle::Discovered
-                    | WalletLifecycle::Rejected
-                    | WalletLifecycle::Suspended
-            ) {
-                reset_paper(record);
-                record.lifecycle = WalletLifecycle::Quarantined;
-                record.quarantine_started_epoch = Some(now);
-                record.retry_after_epoch = None;
-                record.suspension_reason = None;
+        let mut remove_active = false;
+        {
+            let record = self
+                .state
+                .records
+                .entry(wallet.clone())
+                .or_insert_with(|| WalletRecord::new(wallet.clone()));
+            record.family = Some(evaluation.family);
+            record.estimated_win_probability = evaluation.estimated_win_probability;
+            record.evaluation = Some(evaluation.clone());
+            if evaluation.eligible {
+                if matches!(
+                    record.lifecycle,
+                    WalletLifecycle::Discovered
+                        | WalletLifecycle::Rejected
+                        | WalletLifecycle::Suspended
+                ) {
+                    reset_paper(record);
+                    record.lifecycle = WalletLifecycle::Quarantined;
+                    record.quarantine_started_epoch = Some(now);
+                    record.retry_after_epoch = None;
+                    record.suspension_reason = None;
+                }
+            } else if record.is_paper_qualified() {
+                record.lifecycle = WalletLifecycle::Suspended;
+                record.suspension_reason = Some(SuspensionReason::ReplayFailure);
+                record.retry_after_epoch = Some(now + 86_400);
+                remove_active = true;
+            } else {
+                record.lifecycle = WalletLifecycle::Rejected;
+                record.retry_after_epoch = Some(now + 86_400);
             }
-        } else if !record.is_paper_qualified() {
-            record.lifecycle = WalletLifecycle::Rejected;
-            record.retry_after_epoch = Some(now + 86_400);
+        }
+        if remove_active {
+            let before = self.state.active_wallets.len();
+            self.state
+                .active_wallets
+                .retain(|active| !active.eq_ignore_ascii_case(&wallet));
+            if self.state.active_wallets.len() != before {
+                self.state.active_set_generation += 1;
+            }
         }
     }
 
@@ -241,6 +261,9 @@ impl WalletRegistry {
         } else {
             record.paper_losses += 1;
             record.paper_consecutive_losses += 1;
+            record.paper_max_loss_streak = record
+                .paper_max_loss_streak
+                .max(record.paper_consecutive_losses);
         }
         record.paper_outcomes.push(outcome);
         Ok(())
@@ -266,7 +289,7 @@ impl WalletRegistry {
             && record.paper_resolved >= 5
             && record.paper_net_pnl > Decimal::ZERO
             && record.paper_max_drawdown <= bankroll * dec!(0.05)
-            && record.paper_consecutive_losses <= 3
+            && record.paper_max_loss_streak <= 3
             && health >= dec!(0.80);
         if qualified {
             record.lifecycle = WalletLifecycle::PaperQualified;
@@ -366,6 +389,7 @@ fn reset_paper(record: &mut WalletRecord) {
     record.paper_peak_pnl = Decimal::ZERO;
     record.paper_max_drawdown = Decimal::ZERO;
     record.paper_consecutive_losses = 0;
+    record.paper_max_loss_streak = 0;
     record.paper_processing_errors = 0;
     record.paper_outcomes.clear();
 }

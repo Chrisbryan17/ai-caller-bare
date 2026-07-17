@@ -356,6 +356,7 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
                             journal: &journal,
                             runtime: &mut runtime,
                             open: &mut open,
+                            live_execution: false,
                         },
                     )
                     .await?;
@@ -373,6 +374,7 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
                                 journal: &journal,
                                 runtime: &mut runtime,
                                 open: &mut open,
+                                live_execution: true,
                             },
                         )
                         .await?;

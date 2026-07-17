@@ -123,6 +123,8 @@ pub struct LaunchController {
     peak_pnl: Decimal,
     max_drawdown: Decimal,
     consecutive_losses: usize,
+    #[serde(default)]
+    max_consecutive_losses: usize,
     processing_errors: usize,
 }
 
@@ -137,6 +139,7 @@ impl LaunchController {
             peak_pnl: Decimal::ZERO,
             max_drawdown: Decimal::ZERO,
             consecutive_losses: 0,
+            max_consecutive_losses: 0,
             processing_errors: 0,
         }
     }
@@ -150,6 +153,7 @@ impl LaunchController {
             self.consecutive_losses = 0;
         } else {
             self.consecutive_losses += 1;
+            self.max_consecutive_losses = self.max_consecutive_losses.max(self.consecutive_losses);
         }
     }
 
@@ -185,7 +189,7 @@ impl LaunchController {
             && self.resolved_positions >= 5
             && self.net_pnl > Decimal::ZERO
             && self.max_drawdown <= self.bankroll * dec!(0.05)
-            && self.consecutive_losses <= 3
+            && self.max_consecutive_losses <= 3
             && health >= dec!(0.80)
             && qualified_wallets == active_wallets.len()
             && qualified_wallets > 0
@@ -195,7 +199,7 @@ impl LaunchController {
             resolved_positions: self.resolved_positions,
             net_pnl: self.net_pnl,
             max_drawdown: self.max_drawdown,
-            consecutive_losses: self.consecutive_losses,
+            consecutive_losses: self.max_consecutive_losses,
             processing_health: health,
             qualified_wallets,
             preflight_passed: preflight.passed(),

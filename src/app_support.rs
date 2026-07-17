@@ -23,6 +23,7 @@ pub(crate) struct ActiveSignalContext<'a> {
     pub journal: &'a JsonlJournal,
     pub runtime: &'a mut RotationRuntime,
     pub open: &'a mut Option<(String, i64)>,
+    pub live_execution: bool,
 }
 
 pub(crate) async fn apply_discovery_result(
@@ -144,6 +145,7 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
         journal,
         runtime,
         open,
+        live_execution,
     } = context;
     if let Err(reason) = risk.reserve(&signal, now) {
         journal_rejection(now, signal.condition_id, reason.to_string(), journal).await?;
@@ -165,7 +167,9 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
     };
     let expected_cost = request.shares * request.maximum_price
         + crypto_taker_fee(request.shares, request.maximum_price)?;
-    if let Err(reason) = risk.record_capital_at_risk(&signal.condition_id, expected_cost) {
+    if let Err(reason) =
+        risk.record_capital_at_risk_for_mode(&signal.condition_id, expected_cost, live_execution)
+    {
         journal_rejection(now, signal.condition_id, reason.to_string(), journal).await?;
         return Ok(());
     }
