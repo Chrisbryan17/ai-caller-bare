@@ -22,8 +22,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format working tree
-        run: cargo fmt --all
+      - name: Rustfmt check
+        run: cargo fmt --all -- --check
       - name: Verify complete matrix
         shell: bash
         run: |
@@ -70,7 +70,7 @@ jobs:
           fi
 
           exit "$FAIL"
-      - name: Upload formatted source and diagnostics
+      - name: Upload source and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
