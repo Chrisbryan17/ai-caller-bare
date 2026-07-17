@@ -162,9 +162,7 @@ impl RotationRuntime {
         utc_day: i64,
         amount: Decimal,
     ) -> Result<()> {
-        if amount < Decimal::ZERO
-            || amount > self.registry.state().daily_capital_at_risk_limit
-        {
+        if amount < Decimal::ZERO || amount > self.registry.state().daily_capital_at_risk_limit {
             return Err(CopybotError::InvalidConfiguration(
                 "live daily capital at risk is outside configured bounds".into(),
             ));

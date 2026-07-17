@@ -189,10 +189,8 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
         return Ok(());
     }
     if live_execution {
-        runtime.persist_live_daily_capital_at_risk(
-            utc_day_index(now),
-            risk.daily_capital_at_risk(),
-        )?;
+        runtime
+            .persist_live_daily_capital_at_risk(utc_day_index(now), risk.daily_capital_at_risk())?;
     }
 
     let end = signal.market_end_epoch;

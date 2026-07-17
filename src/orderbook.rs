@@ -5,9 +5,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{
-    CopybotError, ExecutionFill, ExecutionRequest, Executor, Result, crypto_taker_fee,
-};
+use crate::{CopybotError, ExecutionFill, ExecutionRequest, Executor, Result, crypto_taker_fee};
 
 fn decimal<'de, D>(deserializer: D) -> std::result::Result<Decimal, D::Error>
 where
