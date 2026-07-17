@@ -45,6 +45,30 @@ pub fn validated_live_buy_fill(
     maximum_price: Decimal,
     response: PostedBuySummary,
 ) -> Result<ExecutionFill> {
+    validate_live_buy_fill(signal, None, maximum_price, response)
+}
+
+/// Validates a production FOK response against the exact requested share count.
+pub fn validated_live_buy_fill_for_request(
+    signal: CandidateSignal,
+    requested_shares: Decimal,
+    maximum_price: Decimal,
+    response: PostedBuySummary,
+) -> Result<ExecutionFill> {
+    if requested_shares <= Decimal::ZERO || !requested_shares.fract().is_zero() {
+        return Err(CopybotError::InvalidConfiguration(
+            "requested FOK shares must be a positive integer".into(),
+        ));
+    }
+    validate_live_buy_fill(signal, Some(requested_shares), maximum_price, response)
+}
+
+fn validate_live_buy_fill(
+    signal: CandidateSignal,
+    requested_shares: Option<Decimal>,
+    maximum_price: Decimal,
+    response: PostedBuySummary,
+) -> Result<ExecutionFill> {
     if maximum_price <= Decimal::ZERO || maximum_price >= Decimal::ONE {
         return Err(CopybotError::InvalidPrice(maximum_price));
     }
@@ -64,6 +88,13 @@ pub fn validated_live_buy_fill(
         return Err(CopybotError::LiveExecution(
             "FOK order returned no positive matched amounts".into(),
         ));
+    }
+    if requested_shares.is_some_and(|requested| response.taking_amount != requested) {
+        return Err(CopybotError::LiveExecution(format!(
+            "FOK response returned {} shares instead of the exact requested {}",
+            response.taking_amount,
+            requested_shares.unwrap_or_default()
+        )));
     }
     let fill_price = response.making_amount / response.taking_amount;
     if fill_price <= Decimal::ZERO || fill_price >= Decimal::ONE {
