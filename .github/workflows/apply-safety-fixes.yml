@@ -29,295 +29,242 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import re
           from pathlib import Path
 
-          p = Path('src/lib.rs')
-          s = p.read_text()
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label}: expected one match, found {text.count(old)}')
+              return text.replace(old, new, 1)
+
+          def sub_once(text, pattern, replacement, label):
+              updated, count = re.subn(pattern, lambda _: replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one regex match, found {count}')
+              return updated
+
+          path = 'src/lib.rs'
+          text = read(path)
           marker = '//! Live order submission is compile-time and runtime gated.\n'
-          if 'DEFAULT_CLOB_API_BASE' not in s:
-              s = s.replace(marker, marker + '\n/// Current production Polymarket CLOB API base.\npub const DEFAULT_CLOB_API_BASE: &str = "https://clob.polymarket.com";\n')
-          p.write_text(s)
+          if 'DEFAULT_CLOB_API_BASE' not in text:
+              text = replace_once(
+                  text,
+                  marker,
+                  marker + '\n/// Current production Polymarket CLOB API base.\npub const DEFAULT_CLOB_API_BASE: &str = "https://clob.polymarket.com";\n',
+                  'lib constant',
+              )
+          write(path, text)
 
-          p = Path('src/discovery_api.rs')
-          s = p.read_text()
-          old = '''            let params: Vec<(&str, &str)> = chunk
-              .iter()
-              .map(|condition| ("condition_ids", condition.as_str()))
-              .collect();
-          '''
-          new = '''            let mut params: Vec<(&str, String)> = vec![
-              ("closed", "true".into()),
-              ("limit", chunk.len().to_string()),
-          ];
-          params.extend(
-              chunk
-                  .iter()
-                  .map(|condition| ("condition_ids", condition.clone())),
-          );
-          '''
-          if old not in s:
-              raise SystemExit('discovery query pattern not found')
-          p.write_text(s.replace(old, new))
+          path = 'src/discovery_api.rs'
+          text = read(path)
+          text = sub_once(
+              text,
+              r'            let params: Vec<\(&str, &str\)> = chunk\n                \.iter\(\)\n                \.map\(\|condition\| \("condition_ids", condition\.as_str\(\)\)\)\n                \.collect\(\);',
+              '''            let mut params: Vec<(&str, String)> = vec![
+                  ("closed", "true".into()),
+                  ("limit", chunk.len().to_string()),
+              ];
+              params.extend(
+                  chunk
+                      .iter()
+                      .map(|condition| ("condition_ids", condition.clone())),
+              );''',
+              'historical resolution query',
+          )
+          write(path, text)
 
-          p = Path('src/risk.rs')
-          s = p.read_text()
-          old = '''    pub fn record_capital_at_risk(
-              &mut self,
-              condition: &str,
-              amount: Decimal,
-          ) -> std::result::Result<(), RiskReject> {
-              if !self.open.contains(condition) {
-                  return Err(RiskReject::DuplicateMarket);
+          path = 'src/risk.rs'
+          text = read(path)
+          text = sub_once(
+              text,
+              r'    pub fn record_capital_at_risk\(\n.*?\n    \}\n\n    /// Releases active exposure',
+              '''    pub fn record_capital_at_risk(
+                  &mut self,
+                  condition: &str,
+                  amount: Decimal,
+              ) -> std::result::Result<(), RiskReject> {
+                  self.record_capital_at_risk_for_mode(condition, amount, true)
               }
-              if self.daily + amount > self.config.max_daily_capital_at_risk {
-                  self.release(condition);
-                  return Err(RiskReject::DailyRiskLimit);
-              }
-              self.daily += amount;
-              Ok(())
-          }
-          '''
-          new = '''    pub fn record_capital_at_risk(
-              &mut self,
-              condition: &str,
-              amount: Decimal,
-          ) -> std::result::Result<(), RiskReject> {
-              self.record_capital_at_risk_for_mode(condition, amount, true)
-          }
 
-          pub fn record_capital_at_risk_for_mode(
-              &mut self,
-              condition: &str,
-              amount: Decimal,
-              counts_daily_risk: bool,
-          ) -> std::result::Result<(), RiskReject> {
-              if !self.open.contains(condition) {
-                  return Err(RiskReject::DuplicateMarket);
-              }
-              if !counts_daily_risk {
-                  return Ok(());
-              }
-              if self.daily + amount > self.config.max_daily_capital_at_risk {
-                  self.release(condition);
-                  return Err(RiskReject::DailyRiskLimit);
-              }
-              self.daily += amount;
-              Ok(())
-          }
-          '''
-          if old not in s:
-              raise SystemExit('risk method pattern not found')
-          p.write_text(s.replace(old, new))
-
-          p = Path('src/launch.rs')
-          s = p.read_text()
-          s = s.replace('''    consecutive_losses: usize,
-          processing_errors: usize,
-          ''', '''    consecutive_losses: usize,
-          #[serde(default)]
-          max_consecutive_losses: usize,
-          processing_errors: usize,
-          ''')
-          s = s.replace('''            consecutive_losses: 0,
-              processing_errors: 0,
-          ''', '''            consecutive_losses: 0,
-              max_consecutive_losses: 0,
-              processing_errors: 0,
-          ''')
-          s = s.replace('''        } else {
-              self.consecutive_losses += 1;
-          }
-          ''', '''        } else {
-              self.consecutive_losses += 1;
-              self.max_consecutive_losses = self.max_consecutive_losses.max(self.consecutive_losses);
-          }
-          ''')
-          s = s.replace('&& self.consecutive_losses <= 3', '&& self.max_consecutive_losses <= 3')
-          s = s.replace('consecutive_losses: self.consecutive_losses,', 'consecutive_losses: self.max_consecutive_losses,')
-          p.write_text(s)
-
-          p = Path('src/registry.rs')
-          s = p.read_text()
-          s = s.replace('''    pub paper_consecutive_losses: usize,
-          pub paper_processing_errors: usize,
-          ''', '''    pub paper_consecutive_losses: usize,
-          #[serde(default)]
-          pub paper_max_loss_streak: usize,
-          pub paper_processing_errors: usize,
-          ''')
-          s = s.replace('''            paper_consecutive_losses: 0,
-              paper_processing_errors: 0,
-          ''', '''            paper_consecutive_losses: 0,
-              paper_max_loss_streak: 0,
-              paper_processing_errors: 0,
-          ''')
-          old = '''    pub fn upsert_evaluation(&mut self, evaluation: CandidateEvaluation, now: i64) {
-              let wallet = evaluation.wallet.to_ascii_lowercase();
-              let record = self
-                  .state
-                  .records
-                  .entry(wallet.clone())
-                  .or_insert_with(|| WalletRecord::new(wallet));
-              record.family = Some(evaluation.family);
-              record.estimated_win_probability = evaluation.estimated_win_probability;
-              record.evaluation = Some(evaluation.clone());
-              if evaluation.eligible {
-                  if matches!(
-                      record.lifecycle,
-                      WalletLifecycle::Discovered
-                          | WalletLifecycle::Rejected
-                          | WalletLifecycle::Suspended
-                  ) {
-                      reset_paper(record);
-                      record.lifecycle = WalletLifecycle::Quarantined;
-                      record.quarantine_started_epoch = Some(now);
-                      record.retry_after_epoch = None;
-                      record.suspension_reason = None;
+              pub fn record_capital_at_risk_for_mode(
+                  &mut self,
+                  condition: &str,
+                  amount: Decimal,
+                  counts_daily_risk: bool,
+              ) -> std::result::Result<(), RiskReject> {
+                  if !self.open.contains(condition) {
+                      return Err(RiskReject::DuplicateMarket);
                   }
-              } else if !record.is_paper_qualified() {
-                  record.lifecycle = WalletLifecycle::Rejected;
-                  record.retry_after_epoch = Some(now + 86_400);
+                  if !counts_daily_risk {
+                      return Ok(());
+                  }
+                  if self.daily + amount > self.config.max_daily_capital_at_risk {
+                      self.release(condition);
+                      return Err(RiskReject::DailyRiskLimit);
+                  }
+                  self.daily += amount;
+                  Ok(())
               }
-          }
-          '''
-          new = '''    pub fn upsert_evaluation(&mut self, evaluation: CandidateEvaluation, now: i64) {
-              let wallet = evaluation.wallet.to_ascii_lowercase();
-              let mut remove_active = false;
-              {
-                  let record = self
-                      .state
-                      .records
-                      .entry(wallet.clone())
-                      .or_insert_with(|| WalletRecord::new(wallet.clone()));
-                  record.family = Some(evaluation.family);
-                  record.estimated_win_probability = evaluation.estimated_win_probability;
-                  record.evaluation = Some(evaluation.clone());
-                  if evaluation.eligible {
-                      if matches!(
-                          record.lifecycle,
-                          WalletLifecycle::Discovered
-                              | WalletLifecycle::Rejected
-                              | WalletLifecycle::Suspended
-                      ) {
-                          reset_paper(record);
-                          record.lifecycle = WalletLifecycle::Quarantined;
-                          record.quarantine_started_epoch = Some(now);
-                          record.retry_after_epoch = None;
-                          record.suspension_reason = None;
+
+              /// Releases active exposure''',
+              'mode-aware daily risk',
+          )
+          write(path, text)
+
+          path = 'src/launch.rs'
+          text = read(path)
+          text = replace_once(
+              text,
+              '    consecutive_losses: usize,\n    processing_errors: usize,',
+              '    consecutive_losses: usize,\n    #[serde(default)]\n    max_consecutive_losses: usize,\n    processing_errors: usize,',
+              'launch max streak field',
+          )
+          text = replace_once(
+              text,
+              '            consecutive_losses: 0,\n            processing_errors: 0,',
+              '            consecutive_losses: 0,\n            max_consecutive_losses: 0,\n            processing_errors: 0,',
+              'launch max streak init',
+          )
+          text = replace_once(
+              text,
+              '        } else {\n            self.consecutive_losses += 1;\n        }',
+              '        } else {\n            self.consecutive_losses += 1;\n            self.max_consecutive_losses = self.max_consecutive_losses.max(self.consecutive_losses);\n        }',
+              'launch max streak update',
+          )
+          text = replace_once(text, '&& self.consecutive_losses <= 3', '&& self.max_consecutive_losses <= 3', 'launch max streak gate')
+          text = replace_once(text, 'consecutive_losses: self.consecutive_losses,', 'consecutive_losses: self.max_consecutive_losses,', 'launch max streak snapshot')
+          write(path, text)
+
+          path = 'src/registry.rs'
+          text = read(path)
+          text = replace_once(
+              text,
+              '    pub paper_consecutive_losses: usize,\n    pub paper_processing_errors: usize,',
+              '    pub paper_consecutive_losses: usize,\n    #[serde(default)]\n    pub paper_max_loss_streak: usize,\n    pub paper_processing_errors: usize,',
+              'registry max streak field',
+          )
+          text = replace_once(
+              text,
+              '            paper_consecutive_losses: 0,\n            paper_processing_errors: 0,',
+              '            paper_consecutive_losses: 0,\n            paper_max_loss_streak: 0,\n            paper_processing_errors: 0,',
+              'registry max streak init',
+          )
+          text = sub_once(
+              text,
+              r'    pub fn upsert_evaluation\(&mut self, evaluation: CandidateEvaluation, now: i64\) \{.*?\n    \}\n\n    pub fn mark_primed',
+              '''    pub fn upsert_evaluation(&mut self, evaluation: CandidateEvaluation, now: i64) {
+                  let wallet = evaluation.wallet.to_ascii_lowercase();
+                  let mut remove_active = false;
+                  {
+                      let record = self
+                          .state
+                          .records
+                          .entry(wallet.clone())
+                          .or_insert_with(|| WalletRecord::new(wallet.clone()));
+                      record.family = Some(evaluation.family);
+                      record.estimated_win_probability = evaluation.estimated_win_probability;
+                      record.evaluation = Some(evaluation.clone());
+                      if evaluation.eligible {
+                          if matches!(
+                              record.lifecycle,
+                              WalletLifecycle::Discovered
+                                  | WalletLifecycle::Rejected
+                                  | WalletLifecycle::Suspended
+                          ) {
+                              reset_paper(record);
+                              record.lifecycle = WalletLifecycle::Quarantined;
+                              record.quarantine_started_epoch = Some(now);
+                              record.retry_after_epoch = None;
+                              record.suspension_reason = None;
+                          }
+                      } else if record.is_paper_qualified() {
+                          record.lifecycle = WalletLifecycle::Suspended;
+                          record.suspension_reason = Some(SuspensionReason::ReplayFailure);
+                          record.retry_after_epoch = Some(now + 86_400);
+                          remove_active = true;
+                      } else {
+                          record.lifecycle = WalletLifecycle::Rejected;
+                          record.retry_after_epoch = Some(now + 86_400);
                       }
-                  } else if record.is_paper_qualified() {
-                      record.lifecycle = WalletLifecycle::Suspended;
-                      record.suspension_reason = Some(SuspensionReason::ReplayFailure);
-                      record.retry_after_epoch = Some(now + 86_400);
-                      remove_active = true;
-                  } else {
-                      record.lifecycle = WalletLifecycle::Rejected;
-                      record.retry_after_epoch = Some(now + 86_400);
+                  }
+                  if remove_active {
+                      let before = self.state.active_wallets.len();
+                      self.state
+                          .active_wallets
+                          .retain(|active| !active.eq_ignore_ascii_case(&wallet));
+                      if self.state.active_wallets.len() != before {
+                          self.state.active_set_generation += 1;
+                      }
                   }
               }
-              if remove_active {
-                  let before = self.state.active_wallets.len();
-                  self.state
-                      .active_wallets
-                      .retain(|active| !active.eq_ignore_ascii_case(&wallet));
-                  if self.state.active_wallets.len() != before {
-                      self.state.active_set_generation += 1;
-                  }
-              }
-          }
-          '''
-          if old not in s:
-              raise SystemExit('registry upsert pattern not found')
-          s = s.replace(old, new)
-          s = s.replace('''        } else {
-              record.paper_losses += 1;
-              record.paper_consecutive_losses += 1;
-          }
-          ''', '''        } else {
-              record.paper_losses += 1;
-              record.paper_consecutive_losses += 1;
-              record.paper_max_loss_streak = record
-                  .paper_max_loss_streak
-                  .max(record.paper_consecutive_losses);
-          }
-          ''')
-          s = s.replace('&& record.paper_consecutive_losses <= 3', '&& record.paper_max_loss_streak <= 3')
-          s = s.replace('''    record.paper_consecutive_losses = 0;
-          record.paper_processing_errors = 0;
-          ''', '''    record.paper_consecutive_losses = 0;
-          record.paper_max_loss_streak = 0;
-          record.paper_processing_errors = 0;
-          ''')
-          p.write_text(s)
 
-          p = Path('src/app_support.rs')
-          s = p.read_text()
-          s = s.replace('''    pub runtime: &'a mut RotationRuntime,
-              pub open: &'a mut Option<(String, i64)>,
-          ''', '''    pub runtime: &'a mut RotationRuntime,
-              pub open: &'a mut Option<(String, i64)>,
-              pub live_execution: bool,
-          ''')
-          s = s.replace('''        runtime,
-              open,
-          } = context;
-          ''', '''        runtime,
-              open,
-              live_execution,
-          } = context;
-          ''')
-          s = s.replace('''    if let Err(reason) = risk.record_capital_at_risk(&signal.condition_id, expected_cost) {
-          ''', '''    if let Err(reason) = risk.record_capital_at_risk_for_mode(
-              &signal.condition_id,
-              expected_cost,
-              live_execution,
-          ) {
-          ''')
-          p.write_text(s)
+              pub fn mark_primed''',
+              'replay-failure suspension',
+          )
+          text = replace_once(
+              text,
+              '        } else {\n            record.paper_losses += 1;\n            record.paper_consecutive_losses += 1;\n        }',
+              '        } else {\n            record.paper_losses += 1;\n            record.paper_consecutive_losses += 1;\n            record.paper_max_loss_streak = record\n                .paper_max_loss_streak\n                .max(record.paper_consecutive_losses);\n        }',
+              'registry max streak update',
+          )
+          text = replace_once(text, '&& record.paper_consecutive_losses <= 3', '&& record.paper_max_loss_streak <= 3', 'registry max streak gate')
+          text = replace_once(
+              text,
+              '    record.paper_consecutive_losses = 0;\n    record.paper_processing_errors = 0;',
+              '    record.paper_consecutive_losses = 0;\n    record.paper_max_loss_streak = 0;\n    record.paper_processing_errors = 0;',
+              'registry max streak reset',
+          )
+          write(path, text)
 
-          p = Path('src/app.rs')
-          s = p.read_text()
-          paper = '''ActiveSignalContext {
-                                      config: &config,
-                                      risk: &mut risk,
-                                      journal: &journal,
-                                      runtime: &mut runtime,
-                                      open: &mut open,
-                                  },'''
-          if paper not in s:
-              raise SystemExit('paper context pattern not found')
-          s = s.replace(paper, '''ActiveSignalContext {
-                                      config: &config,
-                                      risk: &mut risk,
-                                      journal: &journal,
-                                      runtime: &mut runtime,
-                                      open: &mut open,
-                                      live_execution: false,
-                                  },''', 1)
-          live = '''ActiveSignalContext {
-                                          config: &config,
-                                          risk: &mut risk,
-                                          journal: &journal,
-                                          runtime: &mut runtime,
-                                          open: &mut open,
-                                      },'''
-          if live not in s:
-              raise SystemExit('live context pattern not found')
-          s = s.replace(live, '''ActiveSignalContext {
-                                          config: &config,
-                                          risk: &mut risk,
-                                          journal: &journal,
-                                          runtime: &mut runtime,
-                                          open: &mut open,
-                                          live_execution: true,
-                                      },''', 1)
-          p.write_text(s)
+          path = 'src/app_support.rs'
+          text = read(path)
+          text = replace_once(
+              text,
+              "    pub open: &'a mut Option<(String, i64)>,\n}",
+              "    pub open: &'a mut Option<(String, i64)>,\n    pub live_execution: bool,\n}",
+              'active context mode',
+          )
+          text = replace_once(
+              text,
+              '        runtime,\n        open,\n    } = context;',
+              '        runtime,\n        open,\n        live_execution,\n    } = context;',
+              'active context destructure',
+          )
+          text = replace_once(
+              text,
+              '    if let Err(reason) = risk.record_capital_at_risk(&signal.condition_id, expected_cost) {',
+              '    if let Err(reason) = risk.record_capital_at_risk_for_mode(\n        &signal.condition_id,\n        expected_cost,\n        live_execution,\n    ) {',
+              'active mode-aware risk call',
+          )
+          write(path, text)
 
-          p = Path('src/main.rs')
-          s = p.read_text()
-          s = s.replace('use polymarket_copybot::validate_live_ack;', 'use polymarket_copybot::{DEFAULT_CLOB_API_BASE, validate_live_ack};')
-          s = s.replace('#[arg(long, default_value = "https://clob-v2.polymarket.com")]', '#[arg(long, default_value = DEFAULT_CLOB_API_BASE)]')
-          p.write_text(s)
+          path = 'src/app.rs'
+          text = read(path)
+          text = replace_once(
+              text,
+              '                            open: &mut open,\n                        },',
+              '                            open: &mut open,\n                            live_execution: false,\n                        },',
+              'paper execution context',
+          )
+          text = replace_once(
+              text,
+              '                                open: &mut open,\n                            },',
+              '                                open: &mut open,\n                                live_execution: true,\n                            },',
+              'live execution context',
+          )
+          write(path, text)
+
+          path = 'src/main.rs'
+          text = read(path)
+          text = replace_once(text, 'use polymarket_copybot::validate_live_ack;', 'use polymarket_copybot::{DEFAULT_CLOB_API_BASE, validate_live_ack};', 'CLOB constant import')
+          text = replace_once(text, '#[arg(long, default_value = "https://clob-v2.polymarket.com")]', '#[arg(long, default_value = DEFAULT_CLOB_API_BASE)]', 'CLOB default host')
+          write(path, text)
           PY
       - run: cargo fmt --all
       - name: Run focused regression tests
