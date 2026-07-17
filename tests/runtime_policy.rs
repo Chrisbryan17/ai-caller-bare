@@ -49,12 +49,7 @@ fn live_route_requires_active_qualified_wallet_launch_gate_and_auto_live() {
 #[test]
 fn halted_mode_never_routes_to_live() {
     assert_eq!(
-        execution_route(
-            WalletLifecycle::ActiveLive,
-            true,
-            LaunchMode::Halted,
-            true
-        ),
+        execution_route(WalletLifecycle::ActiveLive, true, LaunchMode::Halted, true),
         ExecutionRoute::Ignore
     );
 }
