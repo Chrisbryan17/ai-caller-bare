@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveSetManager, ActiveSetProposal, CandidateEvaluation, CandidateSignal, CopybotError,
-    DynamicWatcherSet, ExecutionFill, LaunchController, MarketResolution, PaperOutcome, Result,
-    RotationContext, Trade, WalletLifecycle, WalletRegistry, WatcherSpec,
+    DynamicWatcherSet, ExecutionFill, LaunchController, LiveOutcome, MarketResolution,
+    PaperOutcome, Result, RotationContext, Trade, WalletLifecycle, WalletRegistry, WatcherSpec,
 };
 
 const RUNTIME_SCHEMA_VERSION: u32 = 1;
@@ -22,6 +22,8 @@ pub struct PaperPosition {
     pub wallet: String,
     pub market_end_epoch: i64,
     pub counts_global: bool,
+    #[serde(default)]
+    pub live: bool,
     pub fill: ExecutionFill,
 }
 
@@ -33,6 +35,7 @@ pub struct PaperResolutionRecord {
     pub won: bool,
     pub pnl: Decimal,
     pub counts_global: bool,
+    pub live: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -177,6 +180,41 @@ impl RotationRuntime {
             wallet,
             market_end_epoch,
             counts_global,
+            live: false,
+            fill,
+        });
+        self.positions.sort_by(|left, right| {
+            (left.market_end_epoch, &left.wallet, &left.fill.condition_id).cmp(&(
+                right.market_end_epoch,
+                &right.wallet,
+                &right.fill.condition_id,
+            ))
+        });
+        self.save_runtime_state()
+    }
+
+    pub fn track_live_fill(
+        &mut self,
+        wallet: &str,
+        market_end_epoch: i64,
+        fill: ExecutionFill,
+    ) -> Result<()> {
+        if fill.paper {
+            return Err(CopybotError::InvalidConfiguration(
+                "live position cannot contain a paper fill".into(),
+            ));
+        }
+        let wallet = wallet.to_ascii_lowercase();
+        if self.positions.iter().any(|position| {
+            position.wallet == wallet && position.fill.condition_id == fill.condition_id
+        }) {
+            return Ok(());
+        }
+        self.positions.push(PaperPosition {
+            wallet,
+            market_end_epoch,
+            counts_global: false,
+            live: true,
             fill,
         });
         self.positions.sort_by(|left, right| {
@@ -201,7 +239,7 @@ impl RotationRuntime {
         condition_ids
     }
 
-    pub fn resolve_paper(
+    pub fn resolve_positions(
         &mut self,
         resolutions: &HashMap<String, MarketResolution>,
         now: i64,
@@ -227,18 +265,30 @@ impl RotationRuntime {
             } else {
                 -position.fill.total_cost
             };
-            self.registry.record_paper_outcome(
-                &position.wallet,
-                PaperOutcome {
-                    condition_id: position.fill.condition_id.clone(),
-                    resolved_epoch: now,
-                    pnl,
-                    won,
-                },
-            )?;
-            self.registry.refresh_qualification(&position.wallet, now)?;
-            if position.counts_global {
-                self.launch_controller.record_resolved(pnl, won);
+            if position.live {
+                self.registry.record_live_outcome(
+                    &position.wallet,
+                    LiveOutcome {
+                        condition_id: position.fill.condition_id.clone(),
+                        resolved_epoch: now,
+                        pnl,
+                        won,
+                    },
+                )?;
+            } else {
+                self.registry.record_paper_outcome(
+                    &position.wallet,
+                    PaperOutcome {
+                        condition_id: position.fill.condition_id.clone(),
+                        resolved_epoch: now,
+                        pnl,
+                        won,
+                    },
+                )?;
+                self.registry.refresh_qualification(&position.wallet, now)?;
+                if position.counts_global {
+                    self.launch_controller.record_resolved(pnl, won);
+                }
             }
             resolved.push(PaperResolutionRecord {
                 wallet: position.wallet,
@@ -247,6 +297,7 @@ impl RotationRuntime {
                 won,
                 pnl,
                 counts_global: position.counts_global,
+                live: position.live,
             });
         }
         self.positions = remaining;
@@ -254,6 +305,14 @@ impl RotationRuntime {
         self.registry.save_atomic()?;
         self.save_runtime_state()?;
         Ok(resolved)
+    }
+
+    pub fn resolve_paper(
+        &mut self,
+        resolutions: &HashMap<String, MarketResolution>,
+        now: i64,
+    ) -> Result<Vec<PaperResolutionRecord>> {
+        self.resolve_positions(resolutions, now)
     }
 
     fn synchronize_watchers(&mut self) -> Result<()> {

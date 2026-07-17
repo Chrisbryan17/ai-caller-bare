@@ -46,6 +46,14 @@ pub struct PaperOutcome {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LiveOutcome {
+    pub condition_id: String,
+    pub resolved_epoch: i64,
+    pub pnl: Decimal,
+    pub won: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WalletRecord {
     pub wallet: String,
     pub lifecycle: WalletLifecycle,
@@ -66,6 +74,22 @@ pub struct WalletRecord {
     pub paper_max_loss_streak: usize,
     pub paper_processing_errors: usize,
     pub paper_outcomes: Vec<PaperOutcome>,
+    #[serde(default)]
+    pub live_resolved: usize,
+    #[serde(default)]
+    pub live_wins: usize,
+    #[serde(default)]
+    pub live_losses: usize,
+    #[serde(default)]
+    pub live_net_pnl: Decimal,
+    #[serde(default)]
+    pub live_peak_pnl: Decimal,
+    #[serde(default)]
+    pub live_max_drawdown: Decimal,
+    #[serde(default)]
+    pub live_consecutive_losses: usize,
+    #[serde(default)]
+    pub live_outcomes: Vec<LiveOutcome>,
     pub suspension_reason: Option<SuspensionReason>,
 }
 
@@ -90,6 +114,14 @@ impl WalletRecord {
             paper_max_loss_streak: 0,
             paper_processing_errors: 0,
             paper_outcomes: Vec::new(),
+            live_resolved: 0,
+            live_wins: 0,
+            live_losses: 0,
+            live_net_pnl: Decimal::ZERO,
+            live_peak_pnl: Decimal::ZERO,
+            live_max_drawdown: Decimal::ZERO,
+            live_consecutive_losses: 0,
+            live_outcomes: Vec::new(),
             suspension_reason: None,
         }
     }
@@ -267,6 +299,59 @@ impl WalletRegistry {
         }
         record.paper_outcomes.push(outcome);
         Ok(())
+    }
+
+    pub fn record_live_outcome(&mut self, wallet: &str, outcome: LiveOutcome) -> Result<bool> {
+        let bankroll = self.state.bankroll;
+        let normalized = wallet.to_ascii_lowercase();
+        let suspension = {
+            let record = self.record_mut(&normalized).ok_or_else(|| {
+                CopybotError::InvalidConfiguration("live outcome wallet is unknown".into())
+            })?;
+            if record
+                .live_outcomes
+                .iter()
+                .any(|existing| existing.condition_id == outcome.condition_id)
+            {
+                return Ok(false);
+            }
+            record.live_resolved += 1;
+            record.live_net_pnl += outcome.pnl;
+            record.live_peak_pnl = record.live_peak_pnl.max(record.live_net_pnl);
+            record.live_max_drawdown = record
+                .live_max_drawdown
+                .max(record.live_peak_pnl - record.live_net_pnl);
+            if outcome.won {
+                record.live_wins += 1;
+                record.live_consecutive_losses = 0;
+            } else {
+                record.live_losses += 1;
+                record.live_consecutive_losses += 1;
+            }
+            record.live_outcomes.push(outcome);
+            let reason = if record.live_consecutive_losses >= 2 {
+                Some(SuspensionReason::ConsecutiveLosses)
+            } else if record.live_max_drawdown > bankroll * dec!(0.05) {
+                Some(SuspensionReason::Drawdown)
+            } else {
+                None
+            };
+            if let Some(reason) = reason.clone() {
+                record.lifecycle = WalletLifecycle::Suspended;
+                record.suspension_reason = Some(reason);
+            }
+            reason
+        };
+        if suspension.is_some() {
+            let before = self.state.active_wallets.len();
+            self.state
+                .active_wallets
+                .retain(|active| !active.eq_ignore_ascii_case(&normalized));
+            if self.state.active_wallets.len() != before {
+                self.state.active_set_generation += 1;
+            }
+        }
+        Ok(suspension.is_some())
     }
 
     pub fn refresh_qualification(&mut self, wallet: &str, now: i64) -> Result<bool> {

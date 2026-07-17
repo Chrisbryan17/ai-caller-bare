@@ -80,6 +80,14 @@ pub enum JournalRecord {
         counts_global: bool,
         active_set_generation: u64,
     },
+    LiveResolved {
+        observed_epoch: i64,
+        wallet: String,
+        condition_id: String,
+        won: bool,
+        pnl: Decimal,
+        active_set_generation: u64,
+    },
 }
 
 #[derive(Clone, Debug)]

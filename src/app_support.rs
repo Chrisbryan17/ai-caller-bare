@@ -74,21 +74,35 @@ pub(crate) async fn apply_paper_resolutions(
     live_active_set: bool,
 ) -> Result<()> {
     let before = lifecycle_snapshot(runtime);
-    let records = runtime.resolve_paper(&resolutions, now)?;
+    let records = runtime.resolve_positions(&resolutions, now)?;
     for record in records {
-        journal
-            .append(&JournalRecord::PaperResolved {
-                observed_epoch: now,
-                wallet: record.wallet,
-                condition_id: record.condition_id,
-                won: record.won,
-                pnl: record.pnl,
-                counts_global: record.counts_global,
-                active_set_generation: runtime.registry().state().active_set_generation,
-            })
-            .await?;
+        let generation = runtime.registry().state().active_set_generation;
+        if record.live {
+            journal
+                .append(&JournalRecord::LiveResolved {
+                    observed_epoch: now,
+                    wallet: record.wallet,
+                    condition_id: record.condition_id,
+                    won: record.won,
+                    pnl: record.pnl,
+                    active_set_generation: generation,
+                })
+                .await?;
+        } else {
+            journal
+                .append(&JournalRecord::PaperResolved {
+                    observed_epoch: now,
+                    wallet: record.wallet,
+                    condition_id: record.condition_id,
+                    won: record.won,
+                    pnl: record.pnl,
+                    counts_global: record.counts_global,
+                    active_set_generation: generation,
+                })
+                .await?;
+        }
     }
-    journal_lifecycle_changes(now, &before, runtime, "forward_paper_resolution", journal).await?;
+    journal_lifecycle_changes(now, &before, runtime, "position_resolution", journal).await?;
     rotate_and_journal(now, runtime, position_open, live_active_set, journal).await?;
     Ok(())
 }
@@ -196,6 +210,8 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
             );
             if fill.paper {
                 runtime.track_paper_fill(&wallet, end, true, fill.clone())?;
+            } else {
+                runtime.track_live_fill(&wallet, end, fill.clone())?;
             }
             *open = Some((fill.condition_id, end));
         }
