@@ -11,11 +11,11 @@ use polymarket_client_sdk_v2::types::U256;
 use rust_decimal::Decimal;
 
 use crate::{
-    CopybotError, ExecutionFill, ExecutionRequest, Executor, PostedBuySummary, PreflightFacts,
-    PreflightStatus, Result, validated_live_buy_fill,
+    CopybotError, DEFAULT_CLOB_API_BASE, ExecutionFill, ExecutionRequest, Executor,
+    PostedBuySummary, PreflightFacts, PreflightStatus, Result, validated_live_buy_fill,
 };
 
-pub const PRODUCTION_CLOB_HOST: &str = "https://clob-v2.polymarket.com";
+pub const PRODUCTION_CLOB_HOST: &str = DEFAULT_CLOB_API_BASE;
 
 pub struct LiveExecutor<S: Signer> {
     signer: S,
