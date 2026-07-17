@@ -1,6 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env,
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -8,18 +9,15 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use futures::future::join_all;
 use polymarket_copybot::{
-    BoundedDedupe, CandidateSignal, CopybotError, DataApiClient, ExecutionRequest, Executor,
-    PaperExecutor, PositionSizer, RiskArbiter, RiskConfig, SizingConfig, StrategyConfig,
-    StrategyEngine, trade_key, validate_live_ack,
+    CandidateSignal, DataApiClient, ExecutionRequest, Executor, JournalRecord, JsonlJournal,
+    PRIMARY_WALLET, PaperExecutor, PositionSizer, RiskArbiter, RiskConfig, SECONDARY_WALLET,
+    SPECIALIST_WALLET, SizingConfig, StrategyConfig, StrategyEngine, WalletWatcher, select_signal,
+    validate_live_ack,
 };
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
-
-const PRIMARY: &str = "0x208326efd5d051c59631ed626848b150b8d8259c";
-const SECONDARY: &str = "0x45230b4fb12569efcc908b4d22c3cee4a19429e2";
-const SPECIALIST: &str = "0xb89d0b6e96e790afa900b53476b8f267a94d1d4f";
 
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 enum Mode {
@@ -48,6 +46,8 @@ struct Args {
     fetch_limit: usize,
     #[arg(long, default_value = "https://data-api.polymarket.com")]
     data_api_base: String,
+    #[arg(long, default_value = "copybot.jsonl")]
+    journal: PathBuf,
     #[arg(long, env = "POLYMARKET_LIVE_ACK")]
     live_ack: Option<String>,
     #[arg(long)]
@@ -70,17 +70,17 @@ async fn main() -> Result<()> {
         "No strategy guarantees profit; live mode can lose the full amount placed"
     );
     let api = DataApiClient::new(args.data_api_base.clone(), Duration::from_secs(3))?;
-    let mut engines = strategy_engines();
-    let wallets: Vec<String> = engines.keys().cloned().collect();
-    let mut dedupe = BoundedDedupe::new(20_000)?;
+    let mut watchers = strategy_watchers()?;
+    let wallets: Vec<String> = watchers.keys().cloned().collect();
+    let journal = JsonlJournal::open(&args.journal).await?;
     let mut risk = RiskArbiter::new(RiskConfig {
         minimum_lead_seconds: 90,
         max_open_markets: 1,
         max_daily_capital_at_risk: args.max_daily_capital_at_risk,
     })?;
     let executor = executor(&args).await?;
-    let mut primed = false;
     let mut open: Option<(String, i64)> = None;
+    let mut failure_streak = 0_u32;
 
     loop {
         let now = epoch();
@@ -96,89 +96,157 @@ async fn main() -> Result<()> {
             .map(|wallet| api.fetch_trades(wallet, args.fetch_limit));
         let results = join_all(requests).await;
         let mut candidates = Vec::new();
+        let mut had_poll_failure = false;
         for (wallet, result) in wallets.iter().zip(results) {
             match result {
                 Ok(trades) => {
-                    let engine = engines.get_mut(wallet).expect("wallet has engine");
-                    for trade in trades {
-                        if !dedupe.insert(trade_key(&trade)) {
-                            continue;
-                        }
-                        match engine.ingest(&trade) {
-                            Ok(Some(signal)) if primed => candidates.push(signal),
-                            Ok(_) | Err(CopybotError::InvalidSlug(_)) => {}
-                            Err(error) => warn!(wallet, %error, "trade rejected"),
-                        }
-                    }
-                }
-                Err(error) => error!(wallet, %error, "wallet poll failed"),
-            }
-        }
-        if !primed {
-            primed = true;
-            info!("baseline primed; old fills will never be copied");
-        } else if let Some(signal) = select_signal(candidates) {
-            match risk.reserve(&signal, now) {
-                Ok(()) => {
-                    let maximum_price =
-                        (signal.source_price + args.max_slippage).min(dec!(0.99));
-                    let sizing = PositionSizer::new(SizingConfig {
-                        bankroll: args.bankroll,
-                        estimated_win_probability: signal.estimated_win_probability,
-                        kelly_multiplier: dec!(0.25),
-                        max_bankroll_fraction: args.max_risk_fraction,
-                        minimum_shares: dec!(5),
-                    })?
-                    .size(maximum_price);
-                    match sizing {
-                        Ok(size) => {
-                            if let Err(reason) = risk.record_capital_at_risk(
-                                &signal.condition_id,
-                                size.total_cost,
-                            ) {
-                                warn!(?reason, "daily risk gate rejected signal");
-                            } else {
-                                let end = signal.market_end_epoch;
-                                let condition = signal.condition_id.clone();
-                                let request = ExecutionRequest {
-                                    signal,
-                                    shares: size.shares,
-                                    maximum_price,
-                                };
-                                match executor.execute(request).await {
-                                    Ok(fill) => {
-                                        info!(
-                                            paper = fill.paper,
-                                            condition = %fill.condition_id,
-                                            outcome = %fill.outcome,
-                                            shares = %fill.shares,
-                                            price = %fill.fill_price,
-                                            total_cost = %fill.total_cost,
-                                            "order filled"
-                                        );
-                                        open = Some((fill.condition_id, end));
-                                    }
-                                    Err(error) => {
-                                        risk.release(&condition);
-                                        error!(%error, "execution failed");
-                                    }
-                                }
+                    let watcher = watchers.get_mut(wallet).expect("wallet has watcher");
+                    let was_primed = watcher.is_primed();
+                    match watcher.process_snapshot(trades) {
+                        Ok(signals) => {
+                            if !was_primed {
+                                info!(wallet, "wallet baseline primed; historical fills ignored");
                             }
+                            candidates.extend(signals);
                         }
                         Err(error) => {
-                            risk.release(&signal.condition_id);
-                            warn!(%error, "sizing rejected signal");
+                            had_poll_failure = true;
+                            warn!(wallet, %error, "wallet snapshot rejected");
                         }
                     }
                 }
-                Err(reason) => info!(?reason, "risk gate skipped signal"),
+                Err(error) => {
+                    had_poll_failure = true;
+                    error!(wallet, %error, "wallet poll failed");
+                }
             }
+        }
+
+        if let Some(signal) = select_signal(candidates) {
+            process_signal(
+                &args,
+                now,
+                signal,
+                &mut risk,
+                executor.as_ref(),
+                &journal,
+                &mut open,
+            )
+            .await?;
         }
 
         if args.once {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(args.poll_ms)).await;
+        failure_streak = if had_poll_failure {
+            failure_streak.saturating_add(1).min(5)
+        } else {
+            0
+        };
+        let multiplier = 1_u64 << failure_streak.min(4);
+        let delay_ms = args.poll_ms.saturating_mul(multiplier).min(5_000);
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+    }
+    Ok(())
+}
+
+async fn process_signal(
+    args: &Args,
+    now: i64,
+    signal: CandidateSignal,
+    risk: &mut RiskArbiter,
+    executor: &dyn Executor,
+    journal: &JsonlJournal,
+    open: &mut Option<(String, i64)>,
+) -> Result<()> {
+    if let Err(reason) = risk.reserve(&signal, now) {
+        journal
+            .append(&JournalRecord::Rejection {
+                observed_epoch: now,
+                condition_id: signal.condition_id,
+                reason: reason.to_string(),
+            })
+            .await?;
+        return Ok(());
+    }
+
+    journal
+        .append(&JournalRecord::Signal {
+            observed_epoch: now,
+            signal: signal.clone(),
+        })
+        .await?;
+    let maximum_price = (signal.source_price + args.max_slippage).min(dec!(0.99));
+    let sizing = PositionSizer::new(SizingConfig {
+        bankroll: args.bankroll,
+        estimated_win_probability: signal.estimated_win_probability,
+        kelly_multiplier: dec!(0.25),
+        max_bankroll_fraction: args.max_risk_fraction,
+        minimum_shares: dec!(5),
+    })?
+    .size(maximum_price);
+    let size = match sizing {
+        Ok(size) => size,
+        Err(error) => {
+            risk.release(&signal.condition_id);
+            journal
+                .append(&JournalRecord::Rejection {
+                    observed_epoch: now,
+                    condition_id: signal.condition_id,
+                    reason: error.to_string(),
+                })
+                .await?;
+            return Ok(());
+        }
+    };
+    if let Err(reason) = risk.record_capital_at_risk(&signal.condition_id, size.total_cost) {
+        journal
+            .append(&JournalRecord::Rejection {
+                observed_epoch: now,
+                condition_id: signal.condition_id,
+                reason: reason.to_string(),
+            })
+            .await?;
+        return Ok(());
+    }
+
+    let end = signal.market_end_epoch;
+    let condition = signal.condition_id.clone();
+    let request = ExecutionRequest {
+        signal,
+        shares: size.shares,
+        maximum_price,
+    };
+    match executor.execute(request).await {
+        Ok(fill) => {
+            journal
+                .append(&JournalRecord::Fill {
+                    observed_epoch: epoch(),
+                    fill: fill.clone(),
+                })
+                .await?;
+            info!(
+                paper = fill.paper,
+                condition = %fill.condition_id,
+                outcome = %fill.outcome,
+                shares = %fill.shares,
+                price = %fill.fill_price,
+                total_cost = %fill.total_cost,
+                "order filled"
+            );
+            *open = Some((fill.condition_id, end));
+        }
+        Err(error) => {
+            risk.release(&condition);
+            journal
+                .append(&JournalRecord::Rejection {
+                    observed_epoch: epoch(),
+                    condition_id: condition,
+                    reason: error.to_string(),
+                })
+                .await?;
+            error!(%error, "execution failed");
+        }
     }
     Ok(())
 }
@@ -196,22 +264,22 @@ fn validate(args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn strategy_engines() -> HashMap<String, StrategyEngine> {
+fn strategy_watchers() -> Result<HashMap<String, WalletWatcher>> {
     [
         StrategyConfig::FirstLargeBuy {
-            wallet: PRIMARY.into(),
+            wallet: PRIMARY_WALLET.into(),
             minimum_notional: dec!(25),
             minimum_lead_seconds: 90,
             estimated_win_probability: dec!(0.515),
         },
         StrategyConfig::FirstLargeBuy {
-            wallet: SECONDARY.into(),
+            wallet: SECONDARY_WALLET.into(),
             minimum_notional: dec!(25),
             minimum_lead_seconds: 90,
             estimated_win_probability: dec!(0.50),
         },
         StrategyConfig::ConfirmedFlow {
-            wallet: SPECIALIST.into(),
+            wallet: SPECIALIST_WALLET.into(),
             minimum_cumulative_notional: dec!(100),
             minimum_directional_share: dec!(0.80),
             minimum_price: dec!(0.40),
@@ -222,49 +290,13 @@ fn strategy_engines() -> HashMap<String, StrategyEngine> {
     ]
     .into_iter()
     .map(|config| {
-        (
-            config.wallet().to_owned(),
-            StrategyEngine::new(config),
-        )
+        let wallet = config.wallet().to_owned();
+        Ok((
+            wallet,
+            WalletWatcher::new(StrategyEngine::new(config), 10_000)?,
+        ))
     })
     .collect()
-}
-
-fn select_signal(signals: Vec<CandidateSignal>) -> Option<CandidateSignal> {
-    let mut groups: HashMap<String, Vec<CandidateSignal>> = HashMap::new();
-    for signal in signals {
-        groups
-            .entry(signal.condition_id.clone())
-            .or_default()
-            .push(signal);
-    }
-    let mut groups: Vec<_> = groups.into_values().collect();
-    groups.sort_by_key(|rows| {
-        rows.iter()
-            .map(|signal| signal.source_timestamp)
-            .min()
-            .unwrap_or(i64::MAX)
-    });
-    for mut rows in groups {
-        let outcomes: HashSet<_> = rows.iter().map(|signal| signal.outcome).collect();
-        if outcomes.len() != 1 {
-            warn!(condition = %rows[0].condition_id, "wallet conflict; market skipped");
-            continue;
-        }
-        rows.sort_by_key(|signal| wallet_priority(&signal.wallet));
-        return rows.into_iter().next();
-    }
-    None
-}
-
-fn wallet_priority(wallet: &str) -> u8 {
-    if wallet.eq_ignore_ascii_case(PRIMARY) {
-        0
-    } else if wallet.eq_ignore_ascii_case(SECONDARY) {
-        1
-    } else {
-        2
-    }
 }
 
 async fn executor(args: &Args) -> Result<Box<dyn Executor>> {
