@@ -3,6 +3,7 @@
 
 mod coordinator;
 mod data_api;
+mod discovery;
 mod discovery_api;
 mod dynamic_watchers;
 mod execution;
@@ -13,6 +14,7 @@ mod registry;
 mod replay;
 mod risk;
 mod rotation;
+mod runtime;
 mod sizing;
 mod strategy;
 mod watcher;
@@ -22,6 +24,7 @@ pub mod live;
 
 pub use coordinator::*;
 pub use data_api::*;
+pub use discovery::*;
 pub use discovery_api::*;
 pub use dynamic_watchers::*;
 pub use execution::*;
@@ -32,6 +35,7 @@ pub use registry::*;
 pub use replay::*;
 pub use risk::*;
 pub use rotation::*;
+pub use runtime::*;
 pub use sizing::*;
 pub use strategy::*;
 pub use watcher::*;
