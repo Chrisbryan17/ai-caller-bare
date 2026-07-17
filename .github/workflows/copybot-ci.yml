@@ -62,7 +62,7 @@ jobs:
           run_check public-paper-smoke cargo run --release -- --mode paper --once --journal /tmp/copybot-smoke.jsonl || FAIL=1
 
           if grep -RInE '(0x[a-fA-F0-9]{64}|PRIVATE_KEY=[^[:space:]]+|BEGIN (RSA |EC )?PRIVATE KEY)' . \
-            --exclude-dir=.git --exclude-dir=target --exclude=verification.log; then
+            --exclude-dir=.git --exclude-dir=target --exclude=verification.log --exclude=copybot-ci.yml; then
             echo "STATUS secret-pattern-scan FAIL" | tee -a verification.log
             FAIL=1
           else
