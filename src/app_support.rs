@@ -8,6 +8,7 @@ use polymarket_copybot::{
     CandidateEvaluation, CandidateSignal, DiscoveryCycleResult, ExecutionRequest, Executor,
     JournalRecord, JsonlJournal, MarketResolution, PositionSizer, RiskArbiter, RotationContext,
     RotationRuntime, SizingConfig, WalletLifecycle, conservative_cent_price, crypto_taker_fee,
+    utc_day_index,
 };
 use rust_decimal_macros::dec;
 use tracing::{error, info, warn};
@@ -186,6 +187,12 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
     {
         journal_rejection(now, signal.condition_id, reason.to_string(), journal).await?;
         return Ok(());
+    }
+    if live_execution {
+        runtime.persist_live_daily_capital_at_risk(
+            utc_day_index(now),
+            risk.daily_capital_at_risk(),
+        )?;
     }
 
     let end = signal.market_end_epoch;
