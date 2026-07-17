@@ -1,8 +1,7 @@
 use std::time::Duration;
 
 use polymarket_copybot::{
-    CandidateSignal, DepthAwarePaperExecutor, ExecutionRequest, Executor, Outcome,
-    crypto_taker_fee,
+    CandidateSignal, DepthAwarePaperExecutor, ExecutionRequest, Executor, Outcome, crypto_taker_fee,
 };
 use rust_decimal_macros::dec;
 use wiremock::{
@@ -10,7 +9,10 @@ use wiremock::{
     matchers::{method, path, query_param},
 };
 
-fn request(shares: rust_decimal::Decimal, maximum_price: rust_decimal::Decimal) -> ExecutionRequest {
+fn request(
+    shares: rust_decimal::Decimal,
+    maximum_price: rust_decimal::Decimal,
+) -> ExecutionRequest {
     ExecutionRequest {
         signal: CandidateSignal {
             wallet: "0x8888888888888888888888888888888888888888".into(),
@@ -59,9 +61,12 @@ async fn paper_fill_walks_real_ask_depth_and_uses_vwap() {
     )
     .await;
 
-    let executor = DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02))
+    let executor =
+        DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02)).unwrap();
+    let fill = executor
+        .execute(request(dec!(5), dec!(0.42)))
+        .await
         .unwrap();
-    let fill = executor.execute(request(dec!(5), dec!(0.42))).await.unwrap();
 
     let collateral = dec!(3) * dec!(0.41) + dec!(2) * dec!(0.42);
     let fee = crypto_taker_fee(dec!(3), dec!(0.41)).unwrap()
@@ -85,13 +90,17 @@ async fn paper_fill_rejects_when_full_fok_depth_is_not_available() {
         }"#,
     )
     .await;
-    let executor = DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02))
-        .unwrap();
+    let executor =
+        DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02)).unwrap();
     let error = executor
         .execute(request(dec!(5), dec!(0.41)))
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("insufficient executable liquidity"));
+    assert!(
+        error
+            .to_string()
+            .contains("insufficient executable liquidity")
+    );
 }
 
 #[tokio::test]
@@ -106,13 +115,17 @@ async fn paper_limit_is_floored_to_tick_and_never_rounded_up() {
         }"#,
     )
     .await;
-    let executor = DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02))
-        .unwrap();
+    let executor =
+        DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02)).unwrap();
     let error = executor
         .execute(request(dec!(5), dec!(0.419)))
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("insufficient executable liquidity"));
+    assert!(
+        error
+            .to_string()
+            .contains("insufficient executable liquidity")
+    );
 }
 
 #[tokio::test]
@@ -127,8 +140,8 @@ async fn paper_fill_enforces_market_minimum_order_size() {
         }"#,
     )
     .await;
-    let executor = DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02))
-        .unwrap();
+    let executor =
+        DepthAwarePaperExecutor::new(server.uri(), Duration::from_secs(1), dec!(0.02)).unwrap();
     let error = executor
         .execute(request(dec!(5), dec!(0.41)))
         .await

@@ -56,7 +56,10 @@ fn restart_restores_the_single_active_position_into_the_risk_arbiter() {
     runtime
         .apply_evaluations(vec![evaluation(wallet)], 1_000)
         .unwrap();
-    runtime.registry_mut().force_paper_qualified(wallet).unwrap();
+    runtime
+        .registry_mut()
+        .force_paper_qualified(wallet)
+        .unwrap();
     runtime
         .registry_mut()
         .apply_active_wallets(vec![wallet.into()], true);
