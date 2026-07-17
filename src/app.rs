@@ -169,6 +169,12 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
             risk.forget_market(condition);
             open = None;
         }
+        if let Some(cleared) = runtime.clear_expired_live_submission(now)? {
+            info!(
+                condition = %cleared.condition_id,
+                "expired ambiguous live-submission reservation cleared at market end"
+            );
+        }
 
         while let Ok(result) = discovery_rx.try_recv() {
             discovery_in_flight = false;
