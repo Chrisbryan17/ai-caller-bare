@@ -45,6 +45,7 @@ pub struct DiscoveryCoordinator {
     data_api: DataApiClient,
     evaluator: ReplayEvaluator,
     config: DiscoveryConfig,
+    bootstrap_wallets: Vec<String>,
 }
 
 impl DiscoveryCoordinator {
@@ -73,7 +74,24 @@ impl DiscoveryCoordinator {
             data_api,
             evaluator: ReplayEvaluator::default(),
             config,
+            bootstrap_wallets: Vec::new(),
         })
+    }
+
+    #[must_use]
+    pub fn with_bootstrap_wallets<I, S>(mut self, wallets: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.bootstrap_wallets = wallets
+            .into_iter()
+            .map(Into::into)
+            .map(|wallet: String| wallet.to_ascii_lowercase())
+            .collect();
+        self.bootstrap_wallets.sort();
+        self.bootstrap_wallets.dedup();
+        self
     }
 
     pub async fn run_cycle(
@@ -108,11 +126,17 @@ impl DiscoveryCoordinator {
                 Err(_) => result.period_failures += 1,
             }
         }
-        result.candidate_wallets = candidates.len();
         if result.period_successes < 2 {
+            result.candidate_wallets = candidates.len();
             result.failed_closed = true;
             return result;
         }
+        for wallet in &self.bootstrap_wallets {
+            if skip_until.get(wallet).is_none_or(|until| *until <= now) {
+                candidates.insert(wallet.clone());
+            }
+        }
+        result.candidate_wallets = candidates.len();
 
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrency));
         let jobs = stream::iter(candidates.into_iter().map(|wallet| {
