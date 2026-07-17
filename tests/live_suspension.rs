@@ -50,8 +50,13 @@ fn two_resolved_live_losses_suspend_wallet_remove_authority_and_survive_restart(
     let registry_path = dir.path().join("registry.json");
     let wallet = "0x5555555555555555555555555555555555555555";
     let mut runtime = RotationRuntime::open(&registry_path, dec!(95), 1_000).unwrap();
-    runtime.apply_evaluations(vec![evaluation(wallet)], 1_000).unwrap();
-    runtime.registry_mut().force_paper_qualified(wallet).unwrap();
+    runtime
+        .apply_evaluations(vec![evaluation(wallet)], 1_000)
+        .unwrap();
+    runtime
+        .registry_mut()
+        .force_paper_qualified(wallet)
+        .unwrap();
     runtime
         .registry_mut()
         .apply_active_wallets(vec![wallet.into()], true);
@@ -103,8 +108,13 @@ fn one_live_loss_above_wallet_drawdown_limit_suspends_immediately() {
     let registry_path = dir.path().join("registry.json");
     let wallet = "0x6666666666666666666666666666666666666666";
     let mut runtime = RotationRuntime::open(&registry_path, dec!(95), 1_000).unwrap();
-    runtime.apply_evaluations(vec![evaluation(wallet)], 1_000).unwrap();
-    runtime.registry_mut().force_paper_qualified(wallet).unwrap();
+    runtime
+        .apply_evaluations(vec![evaluation(wallet)], 1_000)
+        .unwrap();
+    runtime
+        .registry_mut()
+        .force_paper_qualified(wallet)
+        .unwrap();
     runtime
         .registry_mut()
         .apply_active_wallets(vec![wallet.into()], true);
