@@ -1,5 +1,6 @@
 use polymarket_copybot::{
     CandidateSignal, CopybotError, Outcome, PostedBuySummary, validated_live_buy_fill,
+    validated_live_buy_fill_for_request,
 };
 use rust_decimal_macros::dec;
 
@@ -40,6 +41,25 @@ fn successful_limit_buy_uses_server_making_and_taking_amounts() {
     assert_eq!(fill.total_cost, dec!(4.26933));
     assert_eq!(fill.external_id.as_deref(), Some("order-1"));
     assert!(!fill.paper);
+}
+
+#[test]
+fn live_response_requires_the_exact_requested_fok_share_count() {
+    for taking_amount in [dec!(9), dec!(11)] {
+        let result = validated_live_buy_fill_for_request(
+            signal(),
+            dec!(10),
+            dec!(0.41),
+            PostedBuySummary {
+                success: true,
+                error_msg: None,
+                making_amount: taking_amount * dec!(0.41),
+                taking_amount,
+                order_id: "wrong-size".into(),
+            },
+        );
+        assert!(matches!(result, Err(CopybotError::LiveExecution(_))));
+    }
 }
 
 #[test]
