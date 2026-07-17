@@ -1,6 +1,6 @@
 use polymarket_copybot::{
-    CandidateEvaluation, PaperOutcome, ReplayMetrics, StrategyFamily, WalletLifecycle,
-    WalletRegistry,
+    CandidateEvaluation, PaperOutcome, ReplayMetrics, StrategyFamily, SuspensionReason,
+    WalletLifecycle, WalletRegistry,
 };
 use rust_decimal_macros::dec;
 use tempfile::tempdir;
@@ -82,4 +82,70 @@ fn corrupt_registry_fails_closed() {
     let path = dir.path().join("registry.json");
     std::fs::write(&path, "not-json").unwrap();
     assert!(WalletRegistry::load_or_new(&path, dec!(95)).is_err());
+}
+
+#[test]
+fn replay_failure_suspends_previously_qualified_wallet_and_removes_active_authority() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("registry.json");
+    let wallet = "0x2222222222222222222222222222222222222222";
+    let mut registry = WalletRegistry::load_or_new(&path, dec!(95)).unwrap();
+    registry.upsert_evaluation(evaluation(wallet, dec!(100)), 1_000);
+    registry.force_paper_qualified(wallet).unwrap();
+    registry.apply_active_wallets(vec![wallet.into()], true);
+
+    let mut failed = evaluation(wallet, dec!(-10));
+    failed.eligible = false;
+    failed.rejection_reasons = vec!["non_positive_edge".into()];
+    registry.upsert_evaluation(failed, 2_000);
+
+    let record = registry.record(wallet).unwrap();
+    assert_eq!(record.lifecycle, WalletLifecycle::Suspended);
+    assert_eq!(
+        record.suspension_reason,
+        Some(SuspensionReason::ReplayFailure)
+    );
+    assert!(!registry.state().active_wallets.contains(&wallet.to_string()));
+}
+
+#[test]
+fn four_loss_streak_cannot_be_erased_by_later_wins() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("registry.json");
+    let wallet = "0x3333333333333333333333333333333333333333";
+    let mut registry = WalletRegistry::load_or_new(&path, dec!(95)).unwrap();
+    registry.upsert_evaluation(evaluation(wallet, dec!(100)), 1_000);
+
+    for index in 0..4 {
+        registry
+            .record_paper_outcome(
+                wallet,
+                PaperOutcome {
+                    condition_id: format!("loss-{index}"),
+                    resolved_epoch: 2_000 + index,
+                    pnl: dec!(-0.50),
+                    won: false,
+                },
+            )
+            .unwrap();
+    }
+    for index in 0..5 {
+        registry
+            .record_paper_outcome(
+                wallet,
+                PaperOutcome {
+                    condition_id: format!("win-{index}"),
+                    resolved_epoch: 3_000 + index,
+                    pnl: dec!(1.00),
+                    won: true,
+                },
+            )
+            .unwrap();
+    }
+
+    assert!(!registry.refresh_qualification(wallet, 4_700).unwrap());
+    assert_eq!(
+        registry.record(wallet).unwrap().lifecycle,
+        WalletLifecycle::Quarantined
+    );
 }
