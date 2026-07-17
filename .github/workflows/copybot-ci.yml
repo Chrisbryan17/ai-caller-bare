@@ -5,13 +5,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: copybot-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
@@ -20,19 +24,52 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format working tree
         run: cargo fmt --all
-      - name: Verify
+      - name: Verify complete matrix
         shell: bash
         run: |
           set +e
-          cargo test --all-targets --all-features 2>&1 | tee test.log
-          TEST_STATUS=${PIPESTATUS[0]}
-          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee clippy.log
-          CLIPPY_STATUS=${PIPESTATUS[0]}
-          cargo build --release --all-features 2>&1 | tee build.log
-          BUILD_STATUS=${PIPESTATUS[0]}
-          if [ "$TEST_STATUS" -ne 0 ] || [ "$CLIPPY_STATUS" -ne 0 ] || [ "$BUILD_STATUS" -ne 0 ]; then
-            exit 1
+          : > verification.log
+
+          run_check() {
+            local name="$1"
+            shift
+            echo "=== $name ===" | tee -a verification.log
+            "$@" 2>&1 | tee -a verification.log
+            local status=${PIPESTATUS[0]}
+            echo "STATUS $name $status" | tee -a verification.log
+            return "$status"
+          }
+
+          FAIL=0
+          run_check test-default cargo test --all-targets || FAIL=1
+          run_check test-all-features cargo test --all-targets --all-features || FAIL=1
+          run_check clippy-default cargo clippy --all-targets -- -D warnings || FAIL=1
+          run_check clippy-all-features cargo clippy --all-targets --all-features -- -D warnings || FAIL=1
+          run_check build-default cargo build --release || FAIL=1
+          run_check build-all-features cargo build --release --all-features || FAIL=1
+
+          echo "=== live-gate-default ===" | tee -a verification.log
+          cargo run --release -- --mode live --once >/tmp/live-gate.out 2>&1
+          LIVE_GATE_STATUS=$?
+          cat /tmp/live-gate.out | tee -a verification.log
+          if [ "$LIVE_GATE_STATUS" -eq 0 ] || ! grep -q "live trading is not acknowledged" /tmp/live-gate.out; then
+            echo "STATUS live-gate-default FAIL" | tee -a verification.log
+            FAIL=1
+          else
+            echo "STATUS live-gate-default PASS" | tee -a verification.log
           fi
+
+          run_check public-paper-smoke cargo run --release -- --mode paper --once --journal /tmp/copybot-smoke.jsonl || FAIL=1
+
+          if grep -RInE '(0x[a-fA-F0-9]{64}|PRIVATE_KEY=[^[:space:]]+|BEGIN (RSA |EC )?PRIVATE KEY)' . \
+            --exclude-dir=.git --exclude-dir=target --exclude=verification.log; then
+            echo "STATUS secret-pattern-scan FAIL" | tee -a verification.log
+            FAIL=1
+          else
+            echo "STATUS secret-pattern-scan PASS" | tee -a verification.log
+          fi
+
+          exit "$FAIL"
       - name: Upload formatted source and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -41,9 +78,11 @@ jobs:
           path: |
             Cargo.toml
             Cargo.lock
+            README.md
+            .env.example
             src/
             tests/
-            test.log
-            clippy.log
-            build.log
+            docs/
+            verification.log
+            /tmp/copybot-smoke.jsonl
           retention-days: 3
