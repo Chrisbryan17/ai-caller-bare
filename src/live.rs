@@ -12,8 +12,7 @@ use rust_decimal::Decimal;
 
 use crate::{
     CopybotError, DEFAULT_CLOB_API_BASE, ExecutionFill, ExecutionRequest, Executor,
-    PostedBuySummary, PreflightFacts, PreflightStatus, Result,
-    validated_live_buy_fill_for_request,
+    PostedBuySummary, PreflightFacts, PreflightStatus, Result, validated_live_buy_fill_for_request,
 };
 
 pub const PRODUCTION_CLOB_HOST: &str = DEFAULT_CLOB_API_BASE;
