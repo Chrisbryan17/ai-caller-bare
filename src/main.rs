@@ -11,7 +11,7 @@ use polymarket_copybot::{
     CandidateSignal, DataApiClient, ExecutionRequest, Executor, JournalRecord, JsonlJournal,
     PRIMARY_WALLET, PaperExecutor, PositionSizer, RiskArbiter, RiskConfig, SECONDARY_WALLET,
     SPECIALIST_WALLET, SizingConfig, StrategyConfig, StrategyEngine, WalletWatcher,
-    conservative_cent_price, select_signal, validate_live_ack,
+    conservative_cent_price, select_signal, utc_day_index, validate_live_ack,
 };
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -80,9 +80,16 @@ async fn main() -> Result<()> {
     let executor = executor(&args).await?;
     let mut open: Option<(String, i64)> = None;
     let mut failure_streak = 0_u32;
+    let mut risk_day = utc_day_index(epoch());
 
     loop {
         let now = epoch();
+        let current_day = utc_day_index(now);
+        if current_day != risk_day {
+            risk.reset_daily_risk();
+            risk_day = current_day;
+            info!(utc_day = current_day, "daily capital-at-risk budget reset");
+        }
         if let Some((condition, end)) = &open
             && now >= *end
         {
@@ -258,8 +265,20 @@ fn validate(args: &Args) -> Result<()> {
     if args.fetch_limit == 0 || args.fetch_limit > 1000 {
         anyhow::bail!("fetch-limit must be 1..=1000");
     }
+    if args.bankroll <= Decimal::ZERO {
+        anyhow::bail!("bankroll must be positive");
+    }
+    if args.max_risk_fraction <= Decimal::ZERO || args.max_risk_fraction > Decimal::ONE {
+        anyhow::bail!("max-risk-fraction must be in (0,1]");
+    }
+    if args.max_daily_capital_at_risk <= Decimal::ZERO {
+        anyhow::bail!("max-daily-capital-at-risk must be positive");
+    }
     if args.max_slippage < Decimal::ZERO || args.max_slippage > dec!(0.02) {
         anyhow::bail!("max-slippage must be 0..=0.02");
+    }
+    if args.paper_slippage < Decimal::ZERO || args.paper_slippage > dec!(0.25) {
+        anyhow::bail!("paper-slippage must be 0..=0.25");
     }
     Ok(())
 }
