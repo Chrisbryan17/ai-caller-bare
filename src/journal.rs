@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use rust_decimal::Decimal;
 use serde::Serialize;
 use thiserror::Error;
 use tokio::{
@@ -8,7 +9,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::{CandidateSignal, ExecutionFill};
+use crate::{CandidateSignal, ExecutionFill, StrategyFamily, WalletLifecycle};
 
 #[derive(Debug, Error)]
 pub enum JournalError {
@@ -33,6 +34,51 @@ pub enum JournalRecord {
         observed_epoch: i64,
         condition_id: String,
         reason: String,
+    },
+    DiscoveryCycleCompleted {
+        observed_epoch: i64,
+        period_successes: usize,
+        period_failures: usize,
+        candidate_wallets: usize,
+        evaluations: usize,
+        candidate_failures: usize,
+        failed_closed: bool,
+        active_set_generation: u64,
+    },
+    CandidateEvaluated {
+        observed_epoch: i64,
+        wallet: String,
+        family: StrategyFamily,
+        eligible: bool,
+        score: Decimal,
+        resolved_signals: usize,
+        net_pnl_one_cent: Decimal,
+        rejection_reasons: Vec<String>,
+        active_set_generation: u64,
+    },
+    WalletLifecycleChanged {
+        observed_epoch: i64,
+        wallet: String,
+        from: WalletLifecycle,
+        to: WalletLifecycle,
+        reason: String,
+        active_set_generation: u64,
+    },
+    ActiveSetChanged {
+        observed_epoch: i64,
+        previous_wallets: Vec<String>,
+        wallets: Vec<String>,
+        reason: String,
+        active_set_generation: u64,
+    },
+    PaperResolved {
+        observed_epoch: i64,
+        wallet: String,
+        condition_id: String,
+        won: bool,
+        pnl: Decimal,
+        counts_global: bool,
+        active_set_generation: u64,
     },
 }
 
