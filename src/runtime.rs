@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveSetManager, ActiveSetProposal, CandidateEvaluation, CandidateSignal, CopybotError,
-    DynamicWatcherSet, ExecutionFill, LaunchController, LiveOutcome, MarketResolution,
+    DynamicWatcherSet, ExecutionFill, LaunchController, LiveOutcome, MarketResolution, Outcome,
     PaperOutcome, Result, RotationContext, Trade, WalletLifecycle, WalletRegistry, WatcherSpec,
 };
 
@@ -38,11 +38,26 @@ pub struct PaperResolutionRecord {
     pub live: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivePosition {
+    pub condition_id: String,
+    pub outcome: Outcome,
+    pub market_end_epoch: i64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct PersistedLiveRisk {
+    utc_day: i64,
+    capital_at_risk: Decimal,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PersistedRuntimeState {
     schema_version: u32,
     launch_controller: LaunchController,
     positions: Vec<PaperPosition>,
+    #[serde(default)]
+    live_risk: PersistedLiveRisk,
 }
 
 pub struct RotationRuntime {
@@ -51,6 +66,7 @@ pub struct RotationRuntime {
     active_set_manager: ActiveSetManager,
     launch_controller: LaunchController,
     positions: Vec<PaperPosition>,
+    live_risk: PersistedLiveRisk,
     runtime_state_path: PathBuf,
 }
 
@@ -64,16 +80,30 @@ impl RotationRuntime {
         let runtime_state_path = registry_path.with_extension("runtime.json");
         let registry = WalletRegistry::load_or_new(&registry_path, bankroll)?;
         let persisted = load_runtime_state(&runtime_state_path)?;
-        let (launch_controller, positions) = persisted.map_or_else(
-            || (LaunchController::new(started_epoch, bankroll), Vec::new()),
-            |state| (state.launch_controller, state.positions),
+        let (launch_controller, positions, live_risk) = persisted.map_or_else(
+            || {
+                (
+                    LaunchController::new(started_epoch, bankroll),
+                    Vec::new(),
+                    PersistedLiveRisk::default(),
+                )
+            },
+            |state| (state.launch_controller, state.positions, state.live_risk),
         );
+        if live_risk.capital_at_risk < Decimal::ZERO
+            || live_risk.capital_at_risk > registry.state().daily_capital_at_risk_limit
+        {
+            return Err(CopybotError::InvalidConfiguration(
+                "persisted live daily risk is outside configured bounds".into(),
+            ));
+        }
         let mut runtime = Self {
             registry,
             watchers: DynamicWatcherSet::new(10_000)?,
             active_set_manager: ActiveSetManager::default(),
             launch_controller,
             positions,
+            live_risk,
             runtime_state_path,
         };
         runtime.synchronize_watchers()?;
@@ -106,6 +136,51 @@ impl RotationRuntime {
     #[must_use]
     pub fn pending_positions(&self) -> &[PaperPosition] {
         &self.positions
+    }
+
+    pub fn active_position(&self, now: i64) -> Result<Option<ActivePosition>> {
+        let active: Vec<&PaperPosition> = self
+            .positions
+            .iter()
+            .filter(|position| position.market_end_epoch > now)
+            .filter(|position| position.live || position.counts_global)
+            .collect();
+        if active.len() > 1 {
+            return Err(CopybotError::InvalidConfiguration(
+                "persisted runtime contains multiple active positions".into(),
+            ));
+        }
+        Ok(active.first().map(|position| ActivePosition {
+            condition_id: position.fill.condition_id.clone(),
+            outcome: position.fill.outcome,
+            market_end_epoch: position.market_end_epoch,
+        }))
+    }
+
+    pub fn persist_live_daily_capital_at_risk(
+        &mut self,
+        utc_day: i64,
+        amount: Decimal,
+    ) -> Result<()> {
+        if amount < Decimal::ZERO
+            || amount > self.registry.state().daily_capital_at_risk_limit
+        {
+            return Err(CopybotError::InvalidConfiguration(
+                "live daily capital at risk is outside configured bounds".into(),
+            ));
+        }
+        self.live_risk.utc_day = utc_day;
+        self.live_risk.capital_at_risk = amount;
+        self.save_runtime_state()
+    }
+
+    pub fn live_daily_capital_at_risk(&mut self, utc_day: i64) -> Result<Decimal> {
+        if self.live_risk.utc_day != utc_day {
+            self.live_risk.utc_day = utc_day;
+            self.live_risk.capital_at_risk = Decimal::ZERO;
+            self.save_runtime_state()?;
+        }
+        Ok(self.live_risk.capital_at_risk)
     }
 
     pub fn apply_evaluations(
@@ -183,13 +258,7 @@ impl RotationRuntime {
             live: false,
             fill,
         });
-        self.positions.sort_by(|left, right| {
-            (left.market_end_epoch, &left.wallet, &left.fill.condition_id).cmp(&(
-                right.market_end_epoch,
-                &right.wallet,
-                &right.fill.condition_id,
-            ))
-        });
+        self.sort_positions();
         self.save_runtime_state()
     }
 
@@ -217,13 +286,7 @@ impl RotationRuntime {
             live: true,
             fill,
         });
-        self.positions.sort_by(|left, right| {
-            (left.market_end_epoch, &left.wallet, &left.fill.condition_id).cmp(&(
-                right.market_end_epoch,
-                &right.wallet,
-                &right.fill.condition_id,
-            ))
-        });
+        self.sort_positions();
         self.save_runtime_state()
     }
 
@@ -315,6 +378,16 @@ impl RotationRuntime {
         self.resolve_positions(resolutions, now)
     }
 
+    fn sort_positions(&mut self) {
+        self.positions.sort_by(|left, right| {
+            (left.market_end_epoch, &left.wallet, &left.fill.condition_id).cmp(&(
+                right.market_end_epoch,
+                &right.wallet,
+                &right.fill.condition_id,
+            ))
+        });
+    }
+
     fn synchronize_watchers(&mut self) -> Result<()> {
         let active: HashSet<String> = self
             .registry
@@ -375,6 +448,7 @@ impl RotationRuntime {
             schema_version: RUNTIME_SCHEMA_VERSION,
             launch_controller: self.launch_controller.clone(),
             positions: self.positions.clone(),
+            live_risk: self.live_risk.clone(),
         };
         let encoded = serde_json::to_vec_pretty(&state)?;
         let mut file = File::create(&temporary)?;
