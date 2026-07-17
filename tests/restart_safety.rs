@@ -17,7 +17,7 @@ fn evaluation(wallet: &str) -> CandidateEvaluation {
     }
 }
 
-fn live_fill(condition: &str) -> ExecutionFill {
+fn fill(condition: &str, paper: bool) -> ExecutionFill {
     ExecutionFill {
         condition_id: condition.into(),
         asset_id: format!("asset-{condition}"),
@@ -26,8 +26,8 @@ fn live_fill(condition: &str) -> ExecutionFill {
         fill_price: dec!(0.40),
         fee: dec!(0.02),
         total_cost: dec!(4.02),
-        external_id: Some(format!("order-{condition}")),
-        paper: false,
+        external_id: (!paper).then(|| format!("order-{condition}")),
+        paper,
     }
 }
 
@@ -64,7 +64,7 @@ fn restart_restores_the_single_active_position_into_the_risk_arbiter() {
         .registry_mut()
         .apply_active_wallets(vec![wallet.into()], true);
     runtime
-        .track_live_fill(wallet, 2_000, live_fill("still-open"))
+        .track_live_fill(wallet, 2_000, fill("still-open", false))
         .unwrap();
     drop(runtime);
 
@@ -119,6 +119,29 @@ fn pending_live_submission_survives_ambiguous_crash_until_market_end() {
         .unwrap();
     assert_eq!(cleared.condition_id, "ambiguous");
     assert!(restored.active_position(2_000).unwrap().is_none());
+}
+
+#[test]
+fn restart_allows_multiple_expired_unresolved_paper_positions() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.json");
+    let wallet = "0x7777777777777777777777777777777777777777";
+    let mut runtime = RotationRuntime::open(&registry_path, dec!(95), 1_000).unwrap();
+    runtime
+        .track_paper_fill(wallet, 1_100, true, fill("expired-one", true))
+        .unwrap();
+    runtime
+        .track_paper_fill(wallet, 1_200, true, fill("expired-two", true))
+        .unwrap();
+    drop(runtime);
+
+    let restored = RotationRuntime::open(&registry_path, dec!(95), 1_300).unwrap();
+    assert!(restored.active_position(1_300).unwrap().is_none());
+    assert_eq!(restored.pending_positions().len(), 2);
+    assert_eq!(
+        restored.due_condition_ids(1_300),
+        vec!["expired-one".to_owned(), "expired-two".to_owned()]
+    );
 }
 
 #[test]
