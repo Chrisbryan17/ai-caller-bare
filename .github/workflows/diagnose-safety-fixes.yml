@@ -1,0 +1,60 @@
+name: Diagnose Active Wallet Safety Fixes
+
+on:
+  push:
+    branches:
+      - polymarket-copybot-final-20260716-done
+
+concurrency:
+  group: diagnose-active-wallet-safety-fixes
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: polymarket-copybot-final-20260716-done
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Reuse exact safety patch script
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-safety-fixes.yml').read_text()
+          start = workflow.index("          python - <<'PY'\n") + len("          python - <<'PY'\n")
+          end = workflow.index("\n          PY", start)
+          lines = workflow[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          Path('/tmp/apply_safety_fixes.py').write_text(script + '\n')
+          PY
+          python /tmp/apply_safety_fixes.py
+          cargo fmt --all
+      - name: Capture focused regression output
+        shell: bash
+        run: |
+          set +e
+          cargo test --test discovery_api --test registry --test launch --test risk_daily --test runtime_policy > /tmp/focused-regressions.log 2>&1
+          status=$?
+          echo "$status" > /tmp/focused-regressions.status
+          cat /tmp/focused-regressions.log
+          exit 0
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-safety-regression-diagnostics
+          path: |
+            /tmp/focused-regressions.log
+            /tmp/focused-regressions.status
+          if-no-files-found: error
