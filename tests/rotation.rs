@@ -1,6 +1,7 @@
 use polymarket_copybot::{
-    ActiveSetManager, CandidateEvaluation, CorrelationAnalyzer, Outcome, ReplayMetrics,
-    RotationContext, SignalTrace, StrategyFamily, WalletRegistry,
+    ActiveSetManager, CandidateEvaluation, CandidateSignal, CorrelationAnalyzer, Outcome,
+    ReplayMetrics, RotationContext, SignalTrace, StrategyFamily, WalletRegistry,
+    select_signal_with_priority,
 };
 use rust_decimal_macros::dec;
 use tempfile::tempdir;
@@ -10,6 +11,22 @@ fn trace(condition: &str, outcome: Outcome, timestamp: i64) -> SignalTrace {
         condition_id: condition.into(),
         outcome,
         timestamp,
+    }
+}
+
+fn signal(wallet: &str, outcome: Outcome) -> CandidateSignal {
+    CandidateSignal {
+        wallet: wallet.into(),
+        condition_id: "condition".into(),
+        asset_id: "asset".into(),
+        outcome,
+        source_price: dec!(0.40),
+        source_timestamp: 1_000,
+        market_end_epoch: 1_300,
+        slug: "btc-updown-5m-1000".into(),
+        title: "BTC".into(),
+        strategy: "test".into(),
+        estimated_win_probability: dec!(0.60),
     }
 }
 
@@ -90,4 +107,22 @@ fn rotation_is_deferred_while_position_is_open() {
     );
     assert!(proposal.deferred);
     assert_eq!(proposal.wallets, vec!["a"]);
+}
+
+#[test]
+fn same_market_agreement_uses_dynamic_priority_and_conflict_skips() {
+    let chosen = select_signal_with_priority(
+        vec![signal("a", Outcome::Up), signal("b", Outcome::Up)],
+        &["b".into(), "a".into()],
+    )
+    .unwrap();
+    assert_eq!(chosen.wallet, "b");
+
+    assert!(
+        select_signal_with_priority(
+            vec![signal("a", Outcome::Up), signal("b", Outcome::Down)],
+            &["a".into(), "b".into()]
+        )
+        .is_none()
+    );
 }
