@@ -138,8 +138,15 @@ impl RiskArbiter {
         Ok(())
     }
 
+    /// Releases active exposure while retaining the selected direction until the market finishes.
     pub fn release(&mut self, condition: &str) {
         self.open.remove(condition);
+    }
+
+    /// Removes all state for a finished market so the long-running ledger stays bounded.
+    pub fn forget_market(&mut self, condition: &str) {
+        self.open.remove(condition);
+        self.outcomes.remove(condition);
     }
 
     pub fn reset_daily_risk(&mut self) {
