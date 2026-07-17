@@ -131,8 +131,8 @@ impl ActiveSetManager {
         let mut selected: Vec<String> = normalized_current
             .iter()
             .filter(|wallet| records.contains_key(*wallet))
-            .cloned()
             .take(self.max_active)
+            .cloned()
             .collect();
         let mut candidates: Vec<&WalletRecord> = records.values().copied().collect();
         candidates.sort_by(|left, right| {
