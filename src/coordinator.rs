@@ -13,6 +13,25 @@ pub const SPECIALIST_WALLET: &str = "0xb89d0b6e96e790afa900b53476b8f267a94d1d4f"
 /// considered.
 #[must_use]
 pub fn select_signal(signals: Vec<CandidateSignal>) -> Option<CandidateSignal> {
+    select_signal_with_priority(
+        signals,
+        &[
+            PRIMARY_WALLET.into(),
+            SECONDARY_WALLET.into(),
+            SPECIALIST_WALLET.into(),
+        ],
+    )
+}
+
+/// Select at most one signal using a dynamic active-set priority list.
+///
+/// All signals for a market must agree on outcome. Agreement never changes sizing or creates more
+/// than one request. Wallets not present in `priorities` sort after listed wallets, then by address.
+#[must_use]
+pub fn select_signal_with_priority(
+    signals: Vec<CandidateSignal>,
+    priorities: &[String],
+) -> Option<CandidateSignal> {
     let mut groups: HashMap<String, Vec<CandidateSignal>> = HashMap::new();
     for signal in signals {
         groups
@@ -21,31 +40,40 @@ pub fn select_signal(signals: Vec<CandidateSignal>) -> Option<CandidateSignal> {
             .push(signal);
     }
     let mut groups: Vec<_> = groups.into_values().collect();
-    groups.sort_by_key(|rows| {
-        rows.iter()
+    groups.sort_by(|left, right| {
+        let left_timestamp = left
+            .iter()
             .map(|signal| signal.source_timestamp)
             .min()
-            .unwrap_or(i64::MAX)
+            .unwrap_or(i64::MAX);
+        let right_timestamp = right
+            .iter()
+            .map(|signal| signal.source_timestamp)
+            .min()
+            .unwrap_or(i64::MAX);
+        left_timestamp
+            .cmp(&right_timestamp)
+            .then_with(|| left[0].condition_id.cmp(&right[0].condition_id))
     });
     for mut rows in groups {
         let outcomes: HashSet<_> = rows.iter().map(|signal| signal.outcome).collect();
         if outcomes.len() != 1 {
             continue;
         }
-        rows.sort_by_key(|signal| wallet_priority(&signal.wallet));
+        rows.sort_by(|left, right| {
+            dynamic_wallet_priority(&left.wallet, priorities)
+                .cmp(&dynamic_wallet_priority(&right.wallet, priorities))
+                .then_with(|| left.wallet.cmp(&right.wallet))
+                .then_with(|| left.source_timestamp.cmp(&right.source_timestamp))
+        });
         return rows.into_iter().next();
     }
     None
 }
 
-fn wallet_priority(wallet: &str) -> u8 {
-    if wallet.eq_ignore_ascii_case(PRIMARY_WALLET) {
-        0
-    } else if wallet.eq_ignore_ascii_case(SECONDARY_WALLET) {
-        1
-    } else if wallet.eq_ignore_ascii_case(SPECIALIST_WALLET) {
-        2
-    } else {
-        3
-    }
+fn dynamic_wallet_priority(wallet: &str, priorities: &[String]) -> usize {
+    priorities
+        .iter()
+        .position(|candidate| candidate.eq_ignore_ascii_case(wallet))
+        .unwrap_or(usize::MAX)
 }
