@@ -63,7 +63,7 @@ fn rotation_preserves_incumbent_without_ten_percent_challenger_advantage() {
         registry.upsert_evaluation(evaluation(wallet, score, vec![]), 0);
         registry.force_paper_qualified(wallet).unwrap();
     }
-    let proposal = ActiveSetManager::default().propose(
+    let proposal = ActiveSetManager::with_max_active(1).propose(
         &registry,
         &["a".into()],
         RotationContext {
