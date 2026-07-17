@@ -31,6 +31,8 @@ pub enum CopybotError {
     HttpStatus { status: StatusCode, body: String },
     #[error("JSON serialization failed: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("I/O failed: {0}")]
+    Io(#[from] std::io::Error),
     #[error("live trading is not acknowledged")]
     LiveTradingNotAcknowledged,
     #[error("live trading support was not compiled")]
