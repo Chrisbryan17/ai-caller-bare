@@ -14,6 +14,16 @@ pub enum LaunchMode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreflightFacts {
+    pub geoblocked: bool,
+    pub closed_only: bool,
+    pub balance: Decimal,
+    pub has_positive_allowance: bool,
+    pub signer_authenticated: bool,
+    pub open_orders: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreflightStatus {
     pub geoblock_ok: bool,
     pub balance_ok: bool,
@@ -45,6 +55,38 @@ impl PreflightStatus {
             signer_ok: false,
             open_orders_ok: false,
             failure_reason: Some(reason.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn from_facts(facts: &PreflightFacts, required_balance: Decimal) -> Self {
+        let geoblock_ok = !facts.geoblocked && !facts.closed_only;
+        let balance_ok = required_balance > Decimal::ZERO && facts.balance >= required_balance;
+        let allowance_ok = facts.has_positive_allowance;
+        let signer_ok = facts.signer_authenticated;
+        let open_orders_ok = facts.open_orders == 0;
+        let failure_reason = if facts.geoblocked {
+            Some("geoblocked".into())
+        } else if facts.closed_only {
+            Some("account_closed_only".into())
+        } else if !balance_ok {
+            Some("insufficient_balance".into())
+        } else if !allowance_ok {
+            Some("missing_allowance".into())
+        } else if !signer_ok {
+            Some("signer_not_authenticated".into())
+        } else if !open_orders_ok {
+            Some("open_orders_present".into())
+        } else {
+            None
+        };
+        Self {
+            geoblock_ok,
+            balance_ok,
+            allowance_ok,
+            signer_ok,
+            open_orders_ok,
+            failure_reason,
         }
     }
 
