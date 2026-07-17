@@ -1,4 +1,4 @@
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use rust_decimal_macros::dec;
 
 use crate::{CopybotError, Result};
@@ -8,6 +8,22 @@ pub fn crypto_taker_fee_per_share(price: Decimal) -> Result<Decimal> {
         return Err(CopybotError::InvalidPrice(price));
     }
     Ok(dec!(0.07) * price * (Decimal::ONE - price))
+}
+
+/// Floors a positive binary-market price to a one-cent-aligned ceiling.
+///
+/// This deliberately rounds toward zero so the executable limit never exceeds the raw source
+/// price plus configured slippage. One-cent alignment is accepted by markets with either a one-cent
+/// or finer minimum tick.
+pub fn conservative_cent_price(raw: Decimal) -> Result<Decimal> {
+    if raw <= Decimal::ZERO || raw >= Decimal::ONE {
+        return Err(CopybotError::InvalidPrice(raw));
+    }
+    let price = raw.round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    if price <= Decimal::ZERO || price >= Decimal::ONE {
+        return Err(CopybotError::InvalidPrice(raw));
+    }
+    Ok(price)
 }
 
 #[derive(Clone, Debug, PartialEq)]
