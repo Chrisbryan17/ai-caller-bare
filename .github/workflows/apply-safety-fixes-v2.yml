@@ -1,0 +1,62 @@
+name: Apply Corrected Active Wallet Safety Fixes
+
+on:
+  push:
+    branches:
+      - polymarket-copybot-final-20260716-done
+
+concurrency:
+  group: apply-corrected-active-wallet-safety-fixes
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: polymarket-copybot-final-20260716-done
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Apply exact reviewed safety patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-safety-fixes.yml').read_text()
+          start = workflow.index("          python - <<'PY'\n") + len("          python - <<'PY'\n")
+          end = workflow.index("\n          PY", start)
+          lines = workflow[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          Path('/tmp/apply_safety_fixes.py').write_text(script + '\n')
+          PY
+          python /tmp/apply_safety_fixes.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/discovery_api.rs')
+          text = path.read_text()
+          old = '("limit", chunk.len().to_string()),'
+          new = '("limit", "50".into()),'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one generated Gamma limit, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --all
+      - name: Run focused regression tests
+        run: cargo test --test discovery_api --test registry --test launch --test risk_daily --test runtime_policy
+      - name: Commit verified source fixes
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src
+          git commit -m 'fix: harden wallet rotation and paper-live risk separation'
+          git push origin HEAD:polymarket-copybot-final-20260716-done
