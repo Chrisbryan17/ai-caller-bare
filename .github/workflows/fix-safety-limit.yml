@@ -1,0 +1,36 @@
+name: Correct Safety Fix Gamma Limit
+
+on:
+  push:
+    branches:
+      - polymarket-copybot-final-20260716-done
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: polymarket-copybot-final-20260716-done
+      - name: Correct fixed resolution limit
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/apply-safety-fixes.yml')
+          text = path.read_text()
+          old = '("limit", chunk.len().to_string()),'
+          new = '("limit", "50".into()),'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one limit expression, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/apply-safety-fixes.yml
+          git commit -m 'ci: use fixed Gamma resolution page limit'
+          git push origin HEAD:polymarket-copybot-final-20260716-done
