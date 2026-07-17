@@ -1,0 +1,39 @@
+name: Format Active Wallet Source
+
+on:
+  push:
+    branches:
+      - polymarket-copybot-final-20260716-done
+
+concurrency:
+  group: format-active-wallet-source
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: polymarket-copybot-final-20260716-done
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt
+      - run: cargo fmt --all
+      - name: Commit formatter output
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No formatting changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests
+          git commit -m 'style: format active-wallet implementation'
+          git push origin HEAD:polymarket-copybot-final-20260716-done
