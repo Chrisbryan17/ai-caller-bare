@@ -1,0 +1,330 @@
+name: Apply Final Crash Safety
+
+on:
+  push:
+    branches:
+      - polymarket-copybot-final-20260716-done
+
+concurrency:
+  group: apply-final-crash-safety
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: polymarket-copybot-final-20260716-done
+      - name: Apply crash-consistency runtime changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/runtime.rs')
+          text = path.read_text()
+
+          active_marker = '''#[derive(Clone, Debug, PartialEq, Eq)]
+          pub struct ActivePosition {
+              pub condition_id: String,
+              pub outcome: Outcome,
+              pub market_end_epoch: i64,
+          }
+          '''.replace('          ', '')
+          pending_struct = active_marker + '''
+          #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+          pub struct PendingLiveSubmission {
+              pub wallet: String,
+              pub condition_id: String,
+              pub outcome: Outcome,
+              pub observed_epoch: i64,
+              pub market_end_epoch: i64,
+          }
+          '''.replace('          ', '')
+          if 'pub struct PendingLiveSubmission' not in text:
+              text = text.replace(active_marker, pending_struct, 1)
+
+          text = text.replace(
+              '    #[serde(default)]\n    live_risk: PersistedLiveRisk,\n}',
+              '    #[serde(default)]\n    live_risk: PersistedLiveRisk,\n    #[serde(default)]\n    pending_live_submission: Option<PendingLiveSubmission>,\n}',
+              1,
+          )
+          text = text.replace(
+              '    live_risk: PersistedLiveRisk,\n    runtime_state_path: PathBuf,',
+              '    live_risk: PersistedLiveRisk,\n    pending_live_submission: Option<PendingLiveSubmission>,\n    runtime_state_path: PathBuf,',
+              1,
+          )
+          text = text.replace(
+              'let (launch_controller, positions, live_risk) = persisted.map_or_else(',
+              'let (launch_controller, positions, live_risk, pending_live_submission) =\n            persisted.map_or_else(',
+              1,
+          )
+          text = text.replace(
+              '                    PersistedLiveRisk::default(),\n                )',
+              '                    PersistedLiveRisk::default(),\n                    None,\n                )',
+              1,
+          )
+          text = text.replace(
+              '|state| (state.launch_controller, state.positions, state.live_risk),\n        );',
+              '''|state| {
+                  (
+                      state.launch_controller,
+                      state.positions,
+                      state.live_risk,
+                      state.pending_live_submission,
+                  )
+              },
+          );''',
+              1,
+          )
+          text = text.replace(
+              '            live_risk,\n            runtime_state_path,',
+              '            live_risk,\n            pending_live_submission,\n            runtime_state_path,',
+              1,
+          )
+
+          start = text.index('    pub fn active_position(&self, now: i64) -> Result<Option<ActivePosition>> {')
+          end = text.index('    pub fn persist_live_daily_capital_at_risk(', start)
+          active_block = '''    pub fn active_position(&self, now: i64) -> Result<Option<ActivePosition>> {
+              let mut active: Vec<ActivePosition> = self
+                  .positions
+                  .iter()
+                  .filter(|position| position.market_end_epoch > now)
+                  .filter(|position| position.live || position.counts_global)
+                  .map(|position| ActivePosition {
+                      condition_id: position.fill.condition_id.clone(),
+                      outcome: position.fill.outcome,
+                      market_end_epoch: position.market_end_epoch,
+                  })
+                  .collect();
+              if let Some(pending) = &self.pending_live_submission
+                  && pending.market_end_epoch > now
+              {
+                  active.push(ActivePosition {
+                      condition_id: pending.condition_id.clone(),
+                      outcome: pending.outcome,
+                      market_end_epoch: pending.market_end_epoch,
+                  });
+              }
+              active.sort_by(|left, right| {
+                  (&left.condition_id, left.outcome.to_string(), left.market_end_epoch).cmp(&(
+                      &right.condition_id,
+                      right.outcome.to_string(),
+                      right.market_end_epoch,
+                  ))
+              });
+              active.dedup();
+              if active.len() > 1 {
+                  return Err(CopybotError::InvalidConfiguration(
+                      "persisted runtime contains multiple active positions".into(),
+                  ));
+              }
+              Ok(active.into_iter().next())
+          }
+
+          pub fn reserve_live_submission(
+              &mut self,
+              wallet: &str,
+              condition_id: &str,
+              outcome: Outcome,
+              observed_epoch: i64,
+              market_end_epoch: i64,
+          ) -> Result<()> {
+              let wallet = wallet.trim().to_ascii_lowercase();
+              let condition_id = condition_id.trim().to_owned();
+              if wallet.is_empty()
+                  || condition_id.is_empty()
+                  || market_end_epoch <= observed_epoch
+              {
+                  return Err(CopybotError::InvalidConfiguration(
+                      "invalid pending live submission".into(),
+                  ));
+              }
+              if self
+                  .positions
+                  .iter()
+                  .any(|position| position.live && position.market_end_epoch > observed_epoch)
+              {
+                  return Err(CopybotError::InvalidConfiguration(
+                      "cannot submit while a live position is already active".into(),
+                  ));
+              }
+              if let Some(existing) = &self.pending_live_submission {
+                  if existing.market_end_epoch <= observed_epoch {
+                      self.pending_live_submission = None;
+                  } else if existing.wallet == wallet
+                      && existing.condition_id == condition_id
+                      && existing.outcome == outcome
+                      && existing.market_end_epoch == market_end_epoch
+                  {
+                      return Ok(());
+                  } else {
+                      return Err(CopybotError::InvalidConfiguration(
+                          "another live submission is already pending".into(),
+                      ));
+                  }
+              }
+              self.pending_live_submission = Some(PendingLiveSubmission {
+                  wallet,
+                  condition_id,
+                  outcome,
+                  observed_epoch,
+                  market_end_epoch,
+              });
+              self.save_runtime_state()
+          }
+
+          pub fn clear_expired_live_submission(
+              &mut self,
+              now: i64,
+          ) -> Result<Option<PendingLiveSubmission>> {
+              if self
+                  .pending_live_submission
+                  .as_ref()
+                  .is_some_and(|pending| pending.market_end_epoch <= now)
+              {
+                  let cleared = self.pending_live_submission.take();
+                  self.save_runtime_state()?;
+                  return Ok(cleared);
+              }
+              Ok(None)
+          }
+
+          '''.replace('          ', '')
+          text = text[:start] + active_block + text[end:]
+
+          start = text.index('    pub fn track_live_fill(')
+          end = text.index('    pub fn due_condition_ids(', start)
+          live_fill_block = '''    pub fn track_live_fill(
+              &mut self,
+              wallet: &str,
+              market_end_epoch: i64,
+              fill: ExecutionFill,
+          ) -> Result<()> {
+              if fill.paper {
+                  return Err(CopybotError::InvalidConfiguration(
+                      "live position cannot contain a paper fill".into(),
+                  ));
+              }
+              let wallet = wallet.to_ascii_lowercase();
+              let condition_id = fill.condition_id.clone();
+              let duplicate = self.positions.iter().any(|position| {
+                  position.wallet == wallet && position.fill.condition_id == condition_id
+              });
+              if !duplicate {
+                  self.positions.push(PaperPosition {
+                      wallet,
+                      market_end_epoch,
+                      counts_global: false,
+                      live: true,
+                      fill,
+                  });
+                  self.sort_positions();
+              }
+              if self
+                  .pending_live_submission
+                  .as_ref()
+                  .is_some_and(|pending| pending.condition_id == condition_id)
+              {
+                  self.pending_live_submission = None;
+              }
+              self.save_runtime_state()
+          }
+
+          '''.replace('          ', '')
+          text = text[:start] + live_fill_block + text[end:]
+          text = text.replace(
+              '            live_risk: self.live_risk.clone(),\n        };',
+              '            live_risk: self.live_risk.clone(),\n            pending_live_submission: self.pending_live_submission.clone(),\n        };',
+              1,
+          )
+          path.write_text(text)
+
+          path = Path('src/app_support.rs')
+          text = path.read_text()
+          needle = '''    let end = signal.market_end_epoch;
+              let wallet = signal.wallet.clone();
+              let condition = signal.condition_id.clone();
+              match executor.execute(request).await {
+          '''.replace('              ', '')
+          replacement = '''    let end = signal.market_end_epoch;
+              let wallet = signal.wallet.clone();
+              let condition = signal.condition_id.clone();
+              if live_execution {
+                  runtime.reserve_live_submission(
+                      &wallet,
+                      &condition,
+                      signal.outcome,
+                      now,
+                      end,
+                  )?;
+                  *open = Some((condition.clone(), end));
+              }
+              match executor.execute(request).await {
+          '''.replace('              ', '')
+          if needle not in text:
+              raise SystemExit('active execution insertion marker not found')
+          text = text.replace(needle, replacement, 1)
+          old_error = '''        Err(error) => {
+                  risk.release(&condition);
+                  journal_rejection(now, condition, error.to_string(), journal).await?;
+                  error!(%error, "active execution failed");
+              }
+          '''.replace('          ', '')
+          new_error = '''        Err(error) => {
+                  if live_execution {
+                      *open = Some((condition.clone(), end));
+                      error!(%error, "live execution result is ambiguous; reservation retained until market end");
+                  } else {
+                      risk.release(&condition);
+                      error!(%error, "active paper execution failed");
+                  }
+                  journal_rejection(now, condition, error.to_string(), journal).await?;
+              }
+          '''.replace('          ', '')
+          if old_error not in text:
+              raise SystemExit('execution error marker not found')
+          path.write_text(text.replace(old_error, new_error, 1))
+
+          path = Path('src/app.rs')
+          text = path.read_text()
+          needle = '''        if let Some((condition, end)) = &open
+              && now >= *end
+          {
+              risk.forget_market(condition);
+              open = None;
+          }
+          '''.replace('          ', '')
+          replacement = '''        if let Some((condition, end)) = &open
+              && now >= *end
+          {
+              risk.forget_market(condition);
+              open = None;
+          }
+          if let Some(cleared) = runtime.clear_expired_live_submission(now)? {
+              info!(
+                  condition = %cleared.condition_id,
+                  "expired ambiguous live-submission reservation cleared at market end"
+              );
+          }
+          '''.replace('          ', '')
+          if needle not in text:
+              raise SystemExit('market expiry marker not found')
+          path.write_text(text.replace(needle, replacement, 1))
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt
+      - run: cargo fmt --all
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/runtime.rs src/app.rs src/app_support.rs src/execution.rs src/live.rs tests
+          git commit -m 'feat: preserve ambiguous live submissions across crashes'
+          git push origin HEAD:polymarket-copybot-final-20260716-done
