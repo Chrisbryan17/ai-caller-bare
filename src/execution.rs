@@ -27,6 +27,69 @@ pub struct ExecutionFill {
     pub paper: bool,
 }
 
+/// SDK-independent projection of a posted FOK limit BUY response. Keeping this normalized type in
+/// the core lets response validation receive full unit-test coverage without constructing a
+/// non-exhaustive SDK response type.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PostedBuySummary {
+    pub success: bool,
+    pub error_msg: Option<String>,
+    /// Collateral paid by the BUY maker side.
+    pub making_amount: Decimal,
+    /// Outcome shares received by the BUY taker side.
+    pub taking_amount: Decimal,
+    pub order_id: String,
+}
+
+/// Converts a server-confirmed limit BUY into an audited fill and rejects ambiguous responses.
+pub fn validated_live_buy_fill(
+    signal: CandidateSignal,
+    maximum_price: Decimal,
+    response: PostedBuySummary,
+) -> Result<ExecutionFill> {
+    if maximum_price <= Decimal::ZERO || maximum_price >= Decimal::ONE {
+        return Err(CopybotError::InvalidPrice(maximum_price));
+    }
+    if !response.success {
+        return Err(CopybotError::LiveExecution(
+            "order response reported success=false".into(),
+        ));
+    }
+    if let Some(message) = response.error_msg.as_deref().map(str::trim)
+        && !message.is_empty()
+    {
+        return Err(CopybotError::LiveExecution(format!(
+            "order response contained error: {message}"
+        )));
+    }
+    if response.making_amount <= Decimal::ZERO || response.taking_amount <= Decimal::ZERO {
+        return Err(CopybotError::LiveExecution(
+            "FOK order returned no positive matched amounts".into(),
+        ));
+    }
+    let fill_price = response.making_amount / response.taking_amount;
+    if fill_price <= Decimal::ZERO || fill_price >= Decimal::ONE {
+        return Err(CopybotError::InvalidPrice(fill_price));
+    }
+    if fill_price > maximum_price {
+        return Err(CopybotError::LiveExecution(format!(
+            "server fill price {fill_price} exceeded hard limit {maximum_price}"
+        )));
+    }
+    let fee = response.taking_amount * crypto_taker_fee_per_share(fill_price)?;
+    Ok(ExecutionFill {
+        condition_id: signal.condition_id,
+        asset_id: signal.asset_id,
+        outcome: signal.outcome,
+        shares: response.taking_amount,
+        fill_price,
+        fee,
+        total_cost: response.making_amount + fee,
+        external_id: (!response.order_id.trim().is_empty()).then_some(response.order_id),
+        paper: false,
+    })
+}
+
 #[async_trait]
 pub trait Executor: Send + Sync {
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionFill>;
