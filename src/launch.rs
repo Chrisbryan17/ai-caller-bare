@@ -170,7 +170,11 @@ impl LaunchController {
         preflight: &PreflightStatus,
         auto_live: bool,
     ) -> LaunchMode {
-        if auto_live && self.snapshot(now, registry, active_wallets, preflight).eligible {
+        if auto_live
+            && self
+                .snapshot(now, registry, active_wallets, preflight)
+                .eligible
+        {
             LaunchMode::ArmedLive
         } else {
             LaunchMode::Paper

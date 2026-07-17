@@ -186,7 +186,9 @@ impl WalletRegistry {
         if evaluation.eligible {
             if matches!(
                 record.lifecycle,
-                WalletLifecycle::Discovered | WalletLifecycle::Rejected | WalletLifecycle::Suspended
+                WalletLifecycle::Discovered
+                    | WalletLifecycle::Rejected
+                    | WalletLifecycle::Suspended
             ) {
                 reset_paper(record);
                 record.lifecycle = WalletLifecycle::Quarantined;

@@ -258,8 +258,8 @@ impl ReplayEvaluator {
             metrics.roi_one_cent = metrics.net_pnl_one_cent / metrics.turnover_one_cent;
         }
         if metrics.resolved_signals > 0 {
-            metrics.two_cent_profitable_fraction =
-                decimal_from_usize(two_cent_positive) / decimal_from_usize(metrics.resolved_signals);
+            metrics.two_cent_profitable_fraction = decimal_from_usize(two_cent_positive)
+                / decimal_from_usize(metrics.resolved_signals);
         }
         metrics.median_price = median_decimal(&mut prices);
         metrics.median_lead_seconds = median_i64(&mut leads);

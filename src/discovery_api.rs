@@ -18,10 +18,7 @@ where
 
     match Wire::deserialize(deserializer)? {
         Wire::String(value) => value.parse().map_err(serde::de::Error::custom),
-        Wire::Number(value) => value
-            .to_string()
-            .parse()
-            .map_err(serde::de::Error::custom),
+        Wire::Number(value) => value.to_string().parse().map_err(serde::de::Error::custom),
     }
 }
 
