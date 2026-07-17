@@ -19,16 +19,12 @@ jobs:
       - name: Correct fixed resolution limit
         shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('.github/workflows/apply-safety-fixes.yml')
-          text = path.read_text()
-          old = '("limit", chunk.len().to_string()),'
-          new = '("limit", "50".into()),'
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one limit expression, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
-          PY
+          perl -0pi -e 's/chunk\.len\(\)\.to_string\(\)/"50".into()/g' .github/workflows/apply-safety-fixes.yml
+          grep -F '("limit", "50".into()),' .github/workflows/apply-safety-fixes.yml
+          git diff --exit-code -- .github/workflows/apply-safety-fixes.yml && {
+            echo 'No correction was applied.' >&2
+            exit 1
+          }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add .github/workflows/apply-safety-fixes.yml
