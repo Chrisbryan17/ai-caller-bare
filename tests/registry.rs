@@ -105,7 +105,12 @@ fn replay_failure_suspends_previously_qualified_wallet_and_removes_active_author
         record.suspension_reason,
         Some(SuspensionReason::ReplayFailure)
     );
-    assert!(!registry.state().active_wallets.contains(&wallet.to_string()));
+    assert!(
+        !registry
+            .state()
+            .active_wallets
+            .contains(&wallet.to_string())
+    );
 }
 
 #[test]
