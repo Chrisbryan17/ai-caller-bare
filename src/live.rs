@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use polymarket_client_sdk_v2::POLYGON;
 use polymarket_client_sdk_v2::auth::state::Authenticated;
 use polymarket_client_sdk_v2::auth::{LocalSigner, Normal, Signer};
-use polymarket_client_sdk_v2::clob::types::{Amount, OrderType, Side};
+use polymarket_client_sdk_v2::clob::types::{OrderType, Side};
 use polymarket_client_sdk_v2::clob::{Client, Config};
 use polymarket_client_sdk_v2::types::U256;
 
 use crate::{
-    CopybotError, ExecutionFill, ExecutionRequest, Executor, Result,
-    crypto_taker_fee_per_share,
+    CopybotError, ExecutionFill, ExecutionRequest, Executor, PostedBuySummary, Result,
+    validated_live_buy_fill,
 };
 
 pub struct LiveExecutor<S: Signer> {
@@ -48,40 +48,28 @@ where
         }
         let token = U256::from_str(&request.signal.asset_id)
             .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
-        let amount = Amount::shares(request.shares)
-            .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
-        let order = self
+        let response = self
             .client
-            .market_order()
+            .limit_order()
             .token_id(token)
-            .amount(amount)
+            .size(request.shares)
             .price(request.maximum_price)
             .side(Side::Buy)
             .order_type(OrderType::FOK)
-            .build()
+            .build_sign_and_post(&self.signer)
             .await
             .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
-        let signed = self
-            .client
-            .sign(&self.signer, order)
-            .await
-            .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
-        let response = self
-            .client
-            .post_order(signed)
-            .await
-            .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
-        let fee = request.shares * crypto_taker_fee_per_share(request.maximum_price)?;
-        Ok(ExecutionFill {
-            condition_id: request.signal.condition_id,
-            asset_id: request.signal.asset_id,
-            outcome: request.signal.outcome,
-            shares: request.shares,
-            fill_price: request.maximum_price,
-            fee,
-            total_cost: request.shares * request.maximum_price + fee,
-            external_id: Some(format!("{response:?}")),
-            paper: false,
-        })
+
+        validated_live_buy_fill(
+            request.signal,
+            request.maximum_price,
+            PostedBuySummary {
+                success: response.success,
+                error_msg: response.error_msg,
+                making_amount: response.making_amount,
+                taking_amount: response.taking_amount,
+                order_id: response.order_id,
+            },
+        )
     }
 }
