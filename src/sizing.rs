@@ -10,6 +10,17 @@ pub fn crypto_taker_fee_per_share(price: Decimal) -> Result<Decimal> {
     Ok(dec!(0.07) * price * (Decimal::ONE - price))
 }
 
+/// Calculates the protocol's Crypto taker fee and rounds the transaction fee to five decimal
+/// places, matching Polymarket's documented precision.
+pub fn crypto_taker_fee(shares: Decimal, price: Decimal) -> Result<Decimal> {
+    if shares < Decimal::ZERO {
+        return Err(CopybotError::InvalidConfiguration(
+            "fee shares cannot be negative".into(),
+        ));
+    }
+    Ok((shares * crypto_taker_fee_per_share(price)?).round_dp(5))
+}
+
 /// Floors a positive binary-market price to a one-cent-aligned ceiling.
 ///
 /// This deliberately rounds toward zero so the executable limit never exceeds the raw source
@@ -91,27 +102,41 @@ impl PositionSizer {
             return Err(CopybotError::InvalidPrice(price));
         }
         let fee_per_share = crypto_taker_fee_per_share(price)?;
-        let cost = price + fee_per_share;
-        let edge = self.config.estimated_win_probability - cost;
-        let loss_payoff = Decimal::ONE - cost;
+        let estimated_cost_per_share = price + fee_per_share;
+        let edge = self.config.estimated_win_probability - estimated_cost_per_share;
+        let loss_payoff = Decimal::ONE - estimated_cost_per_share;
         if edge <= Decimal::ZERO || loss_payoff <= Decimal::ZERO {
             return Err(CopybotError::NoPositiveEdge);
         }
         let fraction = ((edge / loss_payoff) * self.config.kelly_multiplier)
             .min(self.config.max_bankroll_fraction);
         let capital_budget = self.config.bankroll * fraction;
-        let shares = (capital_budget / cost).floor();
+        let mut shares = (capital_budget / estimated_cost_per_share).floor();
         if shares < self.config.minimum_shares {
             return Err(CopybotError::InsufficientBankroll);
         }
-        let total_fee = shares * fee_per_share;
+
+        let (mut total_fee, mut total_cost) = totals(shares, price)?;
+        while total_cost > capital_budget && shares >= self.config.minimum_shares {
+            shares -= Decimal::ONE;
+            if shares < self.config.minimum_shares {
+                return Err(CopybotError::InsufficientBankroll);
+            }
+            (total_fee, total_cost) = totals(shares, price)?;
+        }
+
         Ok(SizeDecision {
             shares,
             fraction,
             capital_budget,
             fee_per_share,
             total_fee,
-            total_cost: shares * cost,
+            total_cost,
         })
     }
+}
+
+fn totals(shares: Decimal, price: Decimal) -> Result<(Decimal, Decimal)> {
+    let fee = crypto_taker_fee(shares, price)?;
+    Ok((fee, shares * price + fee))
 }
