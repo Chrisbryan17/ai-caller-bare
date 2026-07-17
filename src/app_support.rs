@@ -196,6 +196,10 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
     let end = signal.market_end_epoch;
     let wallet = signal.wallet.clone();
     let condition = signal.condition_id.clone();
+    if live_execution {
+        runtime.reserve_live_submission(&wallet, &condition, signal.outcome, now, end)?;
+        *open = Some((condition.clone(), end));
+    }
     match executor.execute(request).await {
         Ok(fill) => {
             journal
@@ -221,9 +225,14 @@ pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
             *open = Some((fill.condition_id, end));
         }
         Err(error) => {
-            risk.release(&condition);
+            if live_execution {
+                *open = Some((condition.clone(), end));
+                error!(%error, "live execution result is ambiguous; reservation retained until market end");
+            } else {
+                risk.release(&condition);
+                error!(%error, "active paper execution failed");
+            }
             journal_rejection(now, condition, error.to_string(), journal).await?;
-            error!(%error, "active execution failed");
         }
     }
     Ok(())
