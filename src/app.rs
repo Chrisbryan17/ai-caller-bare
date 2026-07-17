@@ -8,8 +8,8 @@ use futures::future::join_all;
 use polymarket_copybot::{
     DataApiClient, DiscoveryApiClient, DiscoveryConfig, DiscoveryCoordinator, DiscoveryCycleResult,
     ExecutionRoute, JsonlJournal, MarketResolution, PRIMARY_WALLET, PaperExecutor, PreflightStatus,
-    RiskArbiter, RiskConfig, RotationRuntime, SECONDARY_WALLET, SPECIALIST_WALLET,
-    WalletLifecycle, execution_route, select_signal_with_priority, utc_day_index,
+    RiskArbiter, RiskConfig, RotationRuntime, SECONDARY_WALLET, SPECIALIST_WALLET, WalletLifecycle,
+    execution_route, select_signal_with_priority, utc_day_index,
 };
 use rust_decimal::Decimal;
 use tokio::sync::mpsc;
@@ -76,11 +76,7 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
             max_concurrency: config.discovery_concurrency,
         },
     )?
-    .with_bootstrap_wallets([
-        PRIMARY_WALLET,
-        SECONDARY_WALLET,
-        SPECIALIST_WALLET,
-    ]);
+    .with_bootstrap_wallets([PRIMARY_WALLET, SECONDARY_WALLET, SPECIALIST_WALLET]);
 
     let started_epoch = epoch();
     let mut runtime = RotationRuntime::open(&config.registry, config.bankroll, started_epoch)?;
@@ -113,9 +109,8 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
     let preflight = PreflightStatus::failed("live_trading_not_compiled");
 
     let (discovery_tx, mut discovery_rx) = mpsc::channel::<DiscoveryCycleResult>(1);
-    let (resolution_tx, mut resolution_rx) = mpsc::channel::<
-        std::result::Result<HashMap<String, MarketResolution>, String>,
-    >(1);
+    let (resolution_tx, mut resolution_rx) =
+        mpsc::channel::<std::result::Result<HashMap<String, MarketResolution>, String>>(1);
     let mut discovery_in_flight = false;
     let mut resolution_in_flight = false;
 

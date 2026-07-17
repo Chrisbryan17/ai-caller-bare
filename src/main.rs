@@ -142,7 +142,9 @@ fn validate(args: &Args) -> Result<()> {
     if args.max_daily_capital_at_risk <= Decimal::ZERO
         || args.max_daily_capital_at_risk > args.bankroll * dec!(0.10)
     {
-        anyhow::bail!("max-daily-capital-at-risk must be positive and no more than 10% of bankroll");
+        anyhow::bail!(
+            "max-daily-capital-at-risk must be positive and no more than 10% of bankroll"
+        );
     }
     if args.max_slippage < Decimal::ZERO || args.max_slippage > dec!(0.02) {
         anyhow::bail!("max-slippage must be 0..=0.02");
