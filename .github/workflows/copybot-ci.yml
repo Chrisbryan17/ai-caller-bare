@@ -1,0 +1,105 @@
+name: Copybot CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: copybot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Rustfmt check
+        run: cargo fmt --all -- --check
+      - name: Verify complete matrix
+        shell: bash
+        run: |
+          set +e
+          : > verification.log
+
+          run_check() {
+            local name="$1"
+            shift
+            echo "=== $name ===" | tee -a verification.log
+            "$@" 2>&1 | tee -a verification.log
+            local status=${PIPESTATUS[0]}
+            echo "STATUS $name $status" | tee -a verification.log
+            return "$status"
+          }
+
+          FAIL=0
+          run_check test-default cargo test --all-targets || FAIL=1
+          run_check test-all-features cargo test --all-targets --all-features || FAIL=1
+          run_check clippy-default cargo clippy --all-targets -- -D warnings || FAIL=1
+          run_check clippy-all-features cargo clippy --all-targets --all-features -- -D warnings || FAIL=1
+          run_check build-default cargo build --release || FAIL=1
+          run_check build-all-features cargo build --release --all-features || FAIL=1
+
+          echo "=== live-gate-default ===" | tee -a verification.log
+          cargo run --release -- --mode live --auto-live --once >/tmp/live-gate.out 2>&1
+          LIVE_GATE_STATUS=$?
+          cat /tmp/live-gate.out | tee -a verification.log
+          if [ "$LIVE_GATE_STATUS" -eq 0 ] || ! grep -q "live trading is not acknowledged" /tmp/live-gate.out; then
+            echo "STATUS live-gate-default FAIL" | tee -a verification.log
+            FAIL=1
+          else
+            echo "STATUS live-gate-default PASS" | tee -a verification.log
+          fi
+
+          run_check public-paper-smoke cargo run --release -- \
+            --mode paper \
+            --once \
+            --leaderboard-limit 1 \
+            --replay-limit 100 \
+            --discovery-concurrency 1 \
+            --registry /tmp/copybot-smoke-registry.json \
+            --journal /tmp/copybot-smoke.jsonl || FAIL=1
+
+          if [ ! -s /tmp/copybot-smoke-registry.json ] || [ ! -f /tmp/copybot-smoke.jsonl ]; then
+            echo "STATUS public-paper-smoke-state FAIL" | tee -a verification.log
+            FAIL=1
+          else
+            echo "STATUS public-paper-smoke-state PASS" | tee -a verification.log
+          fi
+
+          if grep -RInE '(0x[a-fA-F0-9]{64}|PRIVATE_KEY=[^[:space:]]+|BEGIN (RSA |EC )?PRIVATE KEY)' . \
+            --exclude-dir=.git --exclude-dir=target --exclude=verification.log --exclude=copybot-ci.yml; then
+            echo "STATUS secret-pattern-scan FAIL" | tee -a verification.log
+            FAIL=1
+          else
+            echo "STATUS secret-pattern-scan PASS" | tee -a verification.log
+          fi
+
+          exit "$FAIL"
+      - name: Upload source and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: copybot-ci-source
+          path: |
+            Cargo.toml
+            Cargo.lock
+            README.md
+            .env.example
+            RUNBOOK_LOCAL_AGENT.md
+            src/
+            tests/
+            docs/
+            verification.log
+            /tmp/copybot-smoke.jsonl
+            /tmp/copybot-smoke-registry.json
+            /tmp/copybot-smoke-registry.runtime.json
+          retention-days: 3
