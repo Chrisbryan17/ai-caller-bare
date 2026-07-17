@@ -6,14 +6,24 @@ use std::{
 use anyhow::Result;
 use polymarket_copybot::{
     CandidateEvaluation, CandidateSignal, DiscoveryCycleResult, ExecutionRequest, Executor,
-    JournalRecord, JsonlJournal, MarketResolution, PositionSizer, PreflightStatus, RiskArbiter,
-    RotationContext, RotationRuntime, SizingConfig, WalletLifecycle, conservative_cent_price,
-    crypto_taker_fee,
+    JournalRecord, JsonlJournal, MarketResolution, PositionSizer, RiskArbiter, RotationContext,
+    RotationRuntime, SizingConfig, WalletLifecycle, conservative_cent_price, crypto_taker_fee,
 };
 use rust_decimal_macros::dec;
 use tracing::{error, info, warn};
 
 use crate::app::AppConfig;
+
+#[cfg(feature = "live-trading")]
+use polymarket_copybot::PreflightStatus;
+
+pub(crate) struct ActiveSignalContext<'a> {
+    pub config: &'a AppConfig,
+    pub risk: &'a mut RiskArbiter,
+    pub journal: &'a JsonlJournal,
+    pub runtime: &'a mut RotationRuntime,
+    pub open: &'a mut Option<(String, i64)>,
+}
 
 pub(crate) async fn apply_discovery_result(
     now: i64,
@@ -123,15 +133,18 @@ pub(crate) async fn process_shadow_signal<E: Executor + ?Sized>(
 }
 
 pub(crate) async fn process_active_signal<E: Executor + ?Sized>(
-    config: &AppConfig,
     now: i64,
     signal: CandidateSignal,
-    risk: &mut RiskArbiter,
     executor: &E,
-    journal: &JsonlJournal,
-    runtime: &mut RotationRuntime,
-    open: &mut Option<(String, i64)>,
+    context: ActiveSignalContext<'_>,
 ) -> Result<()> {
+    let ActiveSignalContext {
+        config,
+        risk,
+        journal,
+        runtime,
+        open,
+    } = context;
     if let Err(reason) = risk.reserve(&signal, now) {
         journal_rejection(now, signal.condition_id, reason.to_string(), journal).await?;
         return Ok(());
@@ -205,6 +218,7 @@ pub(crate) fn retry_after_map(runtime: &RotationRuntime) -> HashMap<String, i64>
         .collect()
 }
 
+#[cfg(feature = "live-trading")]
 pub(crate) fn log_preflight(preflight: &PreflightStatus) {
     if preflight.passed() {
         info!("authenticated live preflight passed without placing an order");

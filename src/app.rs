@@ -18,8 +18,11 @@ use tracing::{error, info, warn};
 #[cfg(feature = "live-trading")]
 use polymarket_copybot::live::{LiveTradingExecutor, connect_eoa_at};
 
+#[cfg(feature = "live-trading")]
+use crate::app_support::log_preflight;
+
 use crate::app_support::{
-    apply_discovery_result, apply_paper_resolutions, epoch, log_preflight, millis_to_seconds,
+    ActiveSignalContext, apply_discovery_result, apply_paper_resolutions, epoch, millis_to_seconds,
     process_active_signal, process_shadow_signal, retry_after_map,
 };
 
@@ -344,14 +347,16 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
             match route {
                 ExecutionRoute::ActivePaper => {
                     process_active_signal(
-                        &config,
                         now,
                         signal,
-                        &mut risk,
                         &paper_executor,
-                        &journal,
-                        &mut runtime,
-                        &mut open,
+                        ActiveSignalContext {
+                            config: &config,
+                            risk: &mut risk,
+                            journal: &journal,
+                            runtime: &mut runtime,
+                            open: &mut open,
+                        },
                     )
                     .await?;
                 }
@@ -359,14 +364,16 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
                     #[cfg(feature = "live-trading")]
                     if let Some(executor) = live_executor.as_deref() {
                         process_active_signal(
-                            &config,
                             now,
                             signal,
-                            &mut risk,
                             executor,
-                            &journal,
-                            &mut runtime,
-                            &mut open,
+                            ActiveSignalContext {
+                                config: &config,
+                                risk: &mut risk,
+                                journal: &journal,
+                                runtime: &mut runtime,
+                                open: &mut open,
+                            },
                         )
                         .await?;
                     }
