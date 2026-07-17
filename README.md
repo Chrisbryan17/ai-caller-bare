@@ -19,9 +19,10 @@ Supported market slugs are only BTC, ETH, SOL, and XRP `5m` or `15m` Up/Down mar
 - Paper mode by default.
 - Historical fills from the first successful snapshot of **each wallet** are used only to prime state and are never copied.
 - Exact-decimal fee and sizing arithmetic; no binary floating point in the money path.
+- Crypto transaction fees are rounded to Polymarket's documented five-decimal precision.
 - Quarter-Kelly sizing capped at 5% of the configured bankroll by default.
 - One open market at a time.
-- Daily capital-at-risk circuit breaker.
+- Daily capital-at-risk circuit breaker, automatically reset at UTC midnight.
 - Same-cycle conflicting wallet outcomes are skipped.
 - Maximum source-price deterioration defaults to 1 cent and cannot be configured above 2 cents.
 - Live mode requires both a Cargo feature and the exact acknowledgement string.
@@ -66,10 +67,14 @@ Live support is excluded from the default binary. Build it explicitly:
 cargo build --release --features live-trading
 ```
 
-Set secrets in the process environment, not in shell history where possible:
+This release supports an EOA signer only. It does not yet configure Gnosis Safe or Polymarket proxy-wallet signing modes.
+
+Read the private key without echoing it, then export the acknowledgement separately:
 
 ```bash
-export POLYMARKET_PRIVATE_KEY='...'
+read -rsp 'Polymarket private key: ' POLYMARKET_PRIVATE_KEY
+printf '\n'
+export POLYMARKET_PRIVATE_KEY
 export POLYMARKET_LIVE_ACK='I_UNDERSTAND_REAL_MONEY'
 ./target/release/polymarket-copybot \
   --mode live \
@@ -78,7 +83,7 @@ export POLYMARKET_LIVE_ACK='I_UNDERSTAND_REAL_MONEY'
   --max-daily-capital-at-risk 12
 ```
 
-The live executor uses Polymarket's official V2 Rust SDK, the V2 CLOB host, an FOK marketable limit BUY, and an explicit maximum price. It does not bypass geoblocking or platform restrictions.
+The live executor uses Polymarket's official V2 Rust SDK, the V2 CLOB host, an exact-share FOK limit BUY, a cent-aligned maximum price, and server-response validation. It does not bypass geoblocking or platform restrictions.
 
 ## Emergency stop
 
@@ -104,4 +109,5 @@ The CI matrix also runs a public paper-mode smoke test. It never supplies a priv
 - Historical wallet performance can decay or reverse.
 - The configured win probabilities are research estimates, not facts.
 - This version tracks capital at risk conservatively but does not yet reconcile resolved P&L into a dynamically changing bankroll.
+- The live path compiles and is unit-tested against official SDK response semantics, but no real-money order was sent during verification.
 - Run paper mode long enough to measure real detection delay, missed fills, and live slippage before considering live execution.
