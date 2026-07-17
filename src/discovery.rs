@@ -1,6 +1,9 @@
-use std::{collections::{BTreeSet, HashMap}, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
-use futures::{future::join_all, stream, StreamExt as _};
+use futures::{StreamExt as _, future::join_all, stream};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 

@@ -142,11 +142,7 @@ impl RotationRuntime {
         }
     }
 
-    pub fn rotate(
-        &mut self,
-        context: RotationContext,
-        live: bool,
-    ) -> Result<ActiveSetProposal> {
+    pub fn rotate(&mut self, context: RotationContext, live: bool) -> Result<ActiveSetProposal> {
         let current = self.registry.state().active_wallets.clone();
         let proposal = self
             .active_set_manager
