@@ -50,6 +50,8 @@ async fn gamma_resolution_parses_stringified_outcomes_and_prices() {
     Mock::given(method("GET"))
         .and(path("/markets"))
         .and(query_param("condition_ids", "c1"))
+        .and(query_param("closed", "true"))
+        .and(query_param("limit", "50"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"[
               {"conditionId":"c1","closed":true,"outcomes":"[\"Up\",\"Down\"]","outcomePrices":"[\"1\",\"0\"]"}
@@ -71,6 +73,9 @@ async fn unresolved_gamma_market_has_no_winner() {
     let gamma = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/markets"))
+        .and(query_param("condition_ids", "c2"))
+        .and(query_param("closed", "true"))
+        .and(query_param("limit", "50"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"[{"conditionId":"c2","closed":false,"outcomes":"[\"Up\",\"Down\"]","outcomePrices":"[\"0.52\",\"0.48\"]"}]"#,
             "application/json",
