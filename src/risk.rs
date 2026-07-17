@@ -5,6 +5,13 @@ use thiserror::Error;
 
 use crate::{CandidateSignal, CopybotError, Outcome, Result};
 
+const SECONDS_PER_DAY: i64 = 86_400;
+
+#[must_use]
+pub fn utc_day_index(epoch_seconds: i64) -> i64 {
+    epoch_seconds.div_euclid(SECONDS_PER_DAY)
+}
+
 #[derive(Clone, Debug)]
 pub struct BoundedDedupe {
     capacity: usize,
@@ -30,10 +37,10 @@ impl BoundedDedupe {
         if self.set.contains(&key) {
             return false;
         }
-        if self.order.len() == self.capacity {
-            if let Some(old) = self.order.pop_front() {
-                self.set.remove(&old);
-            }
+        if self.order.len() == self.capacity
+            && let Some(old) = self.order.pop_front()
+        {
+            self.set.remove(&old);
         }
         self.set.insert(key.clone());
         self.order.push_back(key);
