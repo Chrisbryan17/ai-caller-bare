@@ -2,6 +2,9 @@ use polymarket_copybot::{
     DEFAULT_CLOB_API_BASE, ExecutionRoute, LaunchMode, WalletLifecycle, execution_route,
 };
 
+#[cfg(feature = "live-trading")]
+use polymarket_copybot::live::PRODUCTION_CLOB_HOST;
+
 #[test]
 fn unqualified_wallets_are_always_shadow_paper_only() {
     for launch in [
@@ -59,4 +62,10 @@ fn halted_mode_never_routes_to_live() {
 #[test]
 fn production_clob_default_uses_current_host() {
     assert_eq!(DEFAULT_CLOB_API_BASE, "https://clob.polymarket.com");
+}
+
+#[cfg(feature = "live-trading")]
+#[test]
+fn live_sdk_connector_uses_the_same_canonical_production_host() {
+    assert_eq!(PRODUCTION_CLOB_HOST, DEFAULT_CLOB_API_BASE);
 }
