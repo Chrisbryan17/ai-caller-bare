@@ -73,5 +73,10 @@ fn pervasive_two_sided_hedging_is_rejected() {
         .evaluate(wallet, &trades, &resolutions(6, Outcome::Up), 1_800_002_000)
         .unwrap();
     assert!(!result.eligible);
-    assert!(result.rejection_reasons.iter().any(|r| r == "two_sided_hedging"));
+    assert!(
+        result
+            .rejection_reasons
+            .iter()
+            .any(|r| r == "two_sided_hedging")
+    );
 }

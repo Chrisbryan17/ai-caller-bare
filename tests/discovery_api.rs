@@ -35,7 +35,10 @@ async fn leaderboard_request_is_crypto_pnl_normalized_and_sorted() {
         .unwrap();
     assert_eq!(snapshot.period, LeaderboardPeriod::Day);
     assert_eq!(snapshot.rows[0].rank, 1);
-    assert_eq!(snapshot.rows[0].proxy_wallet, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(
+        snapshot.rows[0].proxy_wallet,
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
     assert_eq!(snapshot.rows[0].volume, dec!(10.5));
     assert_eq!(snapshot.rows[0].pnl, dec!(5));
 }

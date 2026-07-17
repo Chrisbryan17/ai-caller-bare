@@ -58,8 +58,7 @@ fn correlation_boundary_blocks_effective_duplicate_wallets() {
 #[test]
 fn rotation_preserves_incumbent_without_ten_percent_challenger_advantage() {
     let dir = tempdir().unwrap();
-    let mut registry =
-        WalletRegistry::load_or_new(dir.path().join("r.json"), dec!(95)).unwrap();
+    let mut registry = WalletRegistry::load_or_new(dir.path().join("r.json"), dec!(95)).unwrap();
     for (wallet, score) in [("a", 100), ("b", 109)] {
         registry.upsert_evaluation(evaluation(wallet, score, vec![]), 0);
         registry.force_paper_qualified(wallet).unwrap();
