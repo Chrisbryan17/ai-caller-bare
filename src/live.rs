@@ -39,9 +39,7 @@ where
     S: Signer + Send + Sync,
 {
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionFill> {
-        if request.shares <= rust_decimal::Decimal::ZERO
-            || !request.shares.fract().is_zero()
-        {
+        if request.shares <= rust_decimal::Decimal::ZERO || !request.shares.fract().is_zero() {
             return Err(CopybotError::InvalidConfiguration(
                 "live shares must be a positive integer".into(),
             ));
