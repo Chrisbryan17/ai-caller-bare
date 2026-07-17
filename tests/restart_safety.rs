@@ -91,6 +91,32 @@ fn restart_restores_the_single_active_position_into_the_risk_arbiter() {
 }
 
 #[test]
+fn pending_live_submission_survives_ambiguous_crash_until_market_end() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.json");
+    let wallet = "0x7777777777777777777777777777777777777777";
+    let mut runtime = RotationRuntime::open(&registry_path, dec!(95), 1_000).unwrap();
+    runtime
+        .reserve_live_submission(wallet, "ambiguous", Outcome::Up, 1_500, 2_000)
+        .unwrap();
+    drop(runtime);
+
+    let mut restored = RotationRuntime::open(&registry_path, dec!(95), 1_600).unwrap();
+    let active = restored.active_position(1_600).unwrap().unwrap();
+    assert_eq!(active.condition_id, "ambiguous");
+    assert_eq!(active.outcome, Outcome::Up);
+
+    assert!(restored.clear_expired_live_submission(1_999).unwrap().is_none());
+    assert!(restored.active_position(1_999).unwrap().is_some());
+    let cleared = restored
+        .clear_expired_live_submission(2_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleared.condition_id, "ambiguous");
+    assert!(restored.active_position(2_000).unwrap().is_none());
+}
+
+#[test]
 fn restart_preserves_live_daily_risk_and_resets_only_on_a_new_utc_day() {
     let dir = tempdir().unwrap();
     let registry_path = dir.path().join("registry.json");
