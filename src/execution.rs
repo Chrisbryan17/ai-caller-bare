@@ -120,8 +120,7 @@ impl Executor for PaperExecutor {
         if request.maximum_price <= Decimal::ZERO || request.maximum_price >= Decimal::ONE {
             return Err(CopybotError::InvalidPrice(request.maximum_price));
         }
-        let fill_price =
-            (request.signal.source_price + self.slippage).min(request.maximum_price);
+        let fill_price = (request.signal.source_price + self.slippage).min(request.maximum_price);
         if fill_price < request.signal.source_price {
             return Err(CopybotError::InvalidConfiguration(
                 "price cap below source price".into(),
