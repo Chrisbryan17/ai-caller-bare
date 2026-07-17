@@ -6,10 +6,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures::future::join_all;
 use polymarket_copybot::{
-    DataApiClient, DiscoveryApiClient, DiscoveryConfig, DiscoveryCoordinator, DiscoveryCycleResult,
-    ExecutionRoute, JsonlJournal, MarketResolution, PRIMARY_WALLET, PaperExecutor, PreflightStatus,
-    RiskArbiter, RiskConfig, RotationRuntime, SECONDARY_WALLET, SPECIALIST_WALLET, WalletLifecycle,
-    execution_route, select_signal_with_priority, utc_day_index,
+    DataApiClient, DepthAwarePaperExecutor, DiscoveryApiClient, DiscoveryConfig,
+    DiscoveryCoordinator, DiscoveryCycleResult, ExecutionRoute, JsonlJournal, MarketResolution,
+    PRIMARY_WALLET, PreflightStatus, RiskArbiter, RiskConfig, RotationRuntime, SECONDARY_WALLET,
+    SPECIALIST_WALLET, WalletLifecycle, execution_route, select_signal_with_priority,
+    utc_day_index,
 };
 use rust_decimal::Decimal;
 use tokio::sync::mpsc;
@@ -57,7 +58,6 @@ pub(crate) struct AppConfig {
 }
 
 pub(crate) async fn run(config: AppConfig) -> Result<()> {
-    let _ = (config.preflight_ms, &config.clob_api_base);
     warn!(
         mode = ?config.mode,
         auto_live = config.auto_live,
@@ -84,7 +84,11 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
     let started_epoch = epoch();
     let mut runtime = RotationRuntime::open(&config.registry, config.bankroll, started_epoch)?;
     let journal = JsonlJournal::open(&config.journal).await?;
-    let paper_executor = PaperExecutor::new(config.paper_slippage)?;
+    let paper_executor = DepthAwarePaperExecutor::new(
+        config.clob_api_base.clone(),
+        Duration::from_secs(4),
+        config.paper_slippage,
+    )?;
 
     #[cfg(feature = "live-trading")]
     let live_executor: Option<Arc<dyn LiveTradingExecutor>> = if config.mode == RunMode::Live {
@@ -122,14 +126,28 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
     #[cfg(feature = "live-trading")]
     let mut preflight_in_flight = false;
 
-    let mut risk = RiskArbiter::new(RiskConfig {
-        minimum_lead_seconds: 90,
-        max_open_markets: 1,
-        max_daily_capital_at_risk: config.max_daily_capital_at_risk,
-    })?;
-    let mut open: Option<(String, i64)> = None;
+    let mut risk_day = utc_day_index(started_epoch);
+    let persisted_daily_risk = runtime.live_daily_capital_at_risk(risk_day)?;
+    let mut risk = RiskArbiter::new_with_daily(
+        RiskConfig {
+            minimum_lead_seconds: 90,
+            max_open_markets: 1,
+            max_daily_capital_at_risk: config.max_daily_capital_at_risk,
+        },
+        persisted_daily_risk,
+    )?;
+    let mut open = if let Some(position) = runtime.active_position(started_epoch)? {
+        risk.restore_open(&position.condition_id, position.outcome)?;
+        info!(
+            condition = %position.condition_id,
+            end_epoch = position.market_end_epoch,
+            "restored persisted open position into risk arbiter"
+        );
+        Some((position.condition_id, position.market_end_epoch))
+    } else {
+        None
+    };
     let mut failure_streak = 0_u32;
-    let mut risk_day = utc_day_index(epoch());
     let mut next_discovery_epoch = 0_i64;
     #[cfg(feature = "live-trading")]
     let mut next_preflight_epoch = started_epoch + millis_to_seconds(config.preflight_ms);
@@ -139,6 +157,7 @@ pub(crate) async fn run(config: AppConfig) -> Result<()> {
         let current_day = utc_day_index(now);
         if current_day != risk_day {
             risk.reset_daily_risk();
+            runtime.persist_live_daily_capital_at_risk(current_day, Decimal::ZERO)?;
             risk_day = current_day;
             info!(utc_day = current_day, "daily capital-at-risk budget reset");
         }
