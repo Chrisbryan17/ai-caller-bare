@@ -18,6 +18,9 @@ pub fn execution_route(
     launch_mode: LaunchMode,
     auto_live: bool,
 ) -> ExecutionRoute {
+    if matches!(lifecycle, WalletLifecycle::Quarantined) {
+        return ExecutionRoute::ShadowPaper;
+    }
     if matches!(launch_mode, LaunchMode::Halted) {
         return ExecutionRoute::Ignore;
     }
