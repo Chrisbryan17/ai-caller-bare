@@ -3,9 +3,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CandidateSignal, CopybotError, Outcome, Result, crypto_taker_fee_per_share,
-};
+use crate::{CandidateSignal, CopybotError, Outcome, Result, crypto_taker_fee};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionRequest {
@@ -76,7 +74,7 @@ pub fn validated_live_buy_fill(
             "server fill price {fill_price} exceeded hard limit {maximum_price}"
         )));
     }
-    let fee = response.taking_amount * crypto_taker_fee_per_share(fill_price)?;
+    let fee = crypto_taker_fee(response.taking_amount, fill_price)?;
     Ok(ExecutionFill {
         condition_id: signal.condition_id,
         asset_id: signal.asset_id,
@@ -129,7 +127,7 @@ impl Executor for PaperExecutor {
                 "price cap below source price".into(),
             ));
         }
-        let fee = request.shares * crypto_taker_fee_per_share(fill_price)?;
+        let fee = crypto_taker_fee(request.shares, fill_price)?;
         Ok(ExecutionFill {
             condition_id: request.signal.condition_id,
             asset_id: request.signal.asset_id,
