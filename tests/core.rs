@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use polymarket_copybot::{
     BoundedDedupe, CandidateSignal, ExecutionRequest, Executor, Outcome, PaperExecutor,
     PositionSizer, RiskArbiter, RiskConfig, RiskReject, SizingConfig, StrategyConfig,
