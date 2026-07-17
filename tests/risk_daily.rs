@@ -73,3 +73,27 @@ fn finished_market_is_forgotten_but_simple_release_preserves_conflict_history() 
     risk.forget_market("same");
     risk.reserve(&opposite, 1_000).unwrap();
 }
+
+#[test]
+fn paper_observation_does_not_consume_live_daily_risk_budget() {
+    let mut risk = RiskArbiter::new(RiskConfig {
+        minimum_lead_seconds: 90,
+        max_open_markets: 1,
+        max_daily_capital_at_risk: dec!(9.50),
+    })
+    .unwrap();
+
+    risk.reserve(&candidate("paper"), 1_000).unwrap();
+    risk.record_capital_at_risk_for_mode("paper", dec!(4.75), false)
+        .unwrap();
+    risk.forget_market("paper");
+
+    risk.reserve(&candidate("live-1"), 1_000).unwrap();
+    risk.record_capital_at_risk_for_mode("live-1", dec!(4.75), true)
+        .unwrap();
+    risk.forget_market("live-1");
+
+    risk.reserve(&candidate("live-2"), 1_000).unwrap();
+    risk.record_capital_at_risk_for_mode("live-2", dec!(4.75), true)
+        .unwrap();
+}
