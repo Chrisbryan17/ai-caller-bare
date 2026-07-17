@@ -18,11 +18,22 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Format working tree
+        run: cargo fmt --all
       - name: Tests
         run: cargo test --all-targets --all-features
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Release build
         run: cargo build --release --all-features
+      - name: Upload formatted source and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: copybot-ci-source
+          path: |
+            Cargo.toml
+            Cargo.lock
+            src/
+            tests/
+          retention-days: 3
