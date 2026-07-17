@@ -12,7 +12,8 @@ use rust_decimal::Decimal;
 
 use crate::{
     CopybotError, DEFAULT_CLOB_API_BASE, ExecutionFill, ExecutionRequest, Executor,
-    PostedBuySummary, PreflightFacts, PreflightStatus, Result, validated_live_buy_fill,
+    PostedBuySummary, PreflightFacts, PreflightStatus, Result,
+    validated_live_buy_fill_for_request,
 };
 
 pub const PRODUCTION_CLOB_HOST: &str = DEFAULT_CLOB_API_BASE;
@@ -118,13 +119,14 @@ where
                 "live shares must be a positive integer".into(),
             ));
         }
+        let requested_shares = request.shares;
         let token = U256::from_str(&request.signal.asset_id)
             .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
         let response = self
             .client
             .limit_order()
             .token_id(token)
-            .size(request.shares)
+            .size(requested_shares)
             .price(request.maximum_price)
             .side(Side::Buy)
             .order_type(OrderType::FOK)
@@ -132,8 +134,9 @@ where
             .await
             .map_err(|error| CopybotError::LiveExecution(error.to_string()))?;
 
-        validated_live_buy_fill(
+        validated_live_buy_fill_for_request(
             request.signal,
+            requested_shares,
             request.maximum_price,
             PostedBuySummary {
                 success: response.success,
