@@ -1,18 +1,17 @@
 use std::{
     collections::HashMap,
-    env,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use futures::future::join_all;
 use polymarket_copybot::{
     CandidateSignal, DataApiClient, ExecutionRequest, Executor, JournalRecord, JsonlJournal,
     PRIMARY_WALLET, PaperExecutor, PositionSizer, RiskArbiter, RiskConfig, SECONDARY_WALLET,
-    SPECIALIST_WALLET, SizingConfig, StrategyConfig, StrategyEngine, WalletWatcher, select_signal,
-    validate_live_ack,
+    SPECIALIST_WALLET, SizingConfig, StrategyConfig, StrategyEngine, WalletWatcher,
+    conservative_cent_price, select_signal, validate_live_ack,
 };
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -84,11 +83,11 @@ async fn main() -> Result<()> {
 
     loop {
         let now = epoch();
-        if let Some((condition, end)) = &open {
-            if now >= *end {
-                risk.release(condition);
-                open = None;
-            }
+        if let Some((condition, end)) = &open
+            && now >= *end
+        {
+            risk.release(condition);
+            open = None;
         }
 
         let requests = wallets
@@ -176,7 +175,8 @@ async fn process_signal(
             signal: signal.clone(),
         })
         .await?;
-    let maximum_price = (signal.source_price + args.max_slippage).min(dec!(0.99));
+    let raw_maximum_price = (signal.source_price + args.max_slippage).min(dec!(0.99));
+    let maximum_price = conservative_cent_price(raw_maximum_price)?;
     let sizing = PositionSizer::new(SizingConfig {
         bankroll: args.bankroll,
         estimated_win_probability: signal.estimated_win_probability,
@@ -305,9 +305,11 @@ async fn executor(args: &Args) -> Result<Box<dyn Executor>> {
         Mode::Live => {
             #[cfg(feature = "live-trading")]
             {
-                let private_key = env::var("POLYMARKET_PRIVATE_KEY").context(
-                    "POLYMARKET_PRIVATE_KEY is required; never paste it into chat",
-                )?;
+                let private_key = std::env::var("POLYMARKET_PRIVATE_KEY").map_err(|_| {
+                    anyhow::anyhow!(
+                        "POLYMARKET_PRIVATE_KEY is required; never paste it into chat"
+                    )
+                })?;
                 Ok(Box::new(
                     polymarket_copybot::live::connect_eoa(&private_key).await?,
                 ))
