@@ -58,6 +58,8 @@ pub(crate) struct AppConfig {
 }
 
 pub(crate) async fn run(config: AppConfig) -> Result<()> {
+    #[cfg(not(feature = "live-trading"))]
+    let _ = config.preflight_ms;
     warn!(
         mode = ?config.mode,
         auto_live = config.auto_live,
