@@ -24,7 +24,7 @@ impl<S: Signer> LiveExecutor<S> {
     }
 }
 
-pub async fn connect_eoa(private_key: &str) -> anyhow::Result<impl Executor> {
+pub async fn connect_eoa(private_key: &str) -> anyhow::Result<LiveExecutor<LocalSigner>> {
     let signer = LocalSigner::from_str(private_key)?.with_chain_id(Some(POLYGON));
     let client = Client::new("https://clob-v2.polymarket.com", Config::default())?
         .authentication_builder(&signer)
