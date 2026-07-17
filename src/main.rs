@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         if let Some((condition, end)) = &open
             && now >= *end
         {
-            risk.release(condition);
+            risk.forget_market(condition);
             open = None;
         }
 
