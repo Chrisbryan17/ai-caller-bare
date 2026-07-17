@@ -106,7 +106,12 @@ fn pending_live_submission_survives_ambiguous_crash_until_market_end() {
     assert_eq!(active.condition_id, "ambiguous");
     assert_eq!(active.outcome, Outcome::Up);
 
-    assert!(restored.clear_expired_live_submission(1_999).unwrap().is_none());
+    assert!(
+        restored
+            .clear_expired_live_submission(1_999)
+            .unwrap()
+            .is_none()
+    );
     assert!(restored.active_position(1_999).unwrap().is_some());
     let cleared = restored
         .clear_expired_live_submission(2_000)
