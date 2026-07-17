@@ -49,7 +49,7 @@ jobs:
           run_check build-all-features cargo build --release --all-features || FAIL=1
 
           echo "=== live-gate-default ===" | tee -a verification.log
-          cargo run --release -- --mode live --once >/tmp/live-gate.out 2>&1
+          cargo run --release -- --mode live --auto-live --once >/tmp/live-gate.out 2>&1
           LIVE_GATE_STATUS=$?
           cat /tmp/live-gate.out | tee -a verification.log
           if [ "$LIVE_GATE_STATUS" -eq 0 ] || ! grep -q "live trading is not acknowledged" /tmp/live-gate.out; then
@@ -59,7 +59,21 @@ jobs:
             echo "STATUS live-gate-default PASS" | tee -a verification.log
           fi
 
-          run_check public-paper-smoke cargo run --release -- --mode paper --once --journal /tmp/copybot-smoke.jsonl || FAIL=1
+          run_check public-paper-smoke cargo run --release -- \
+            --mode paper \
+            --once \
+            --leaderboard-limit 1 \
+            --replay-limit 100 \
+            --discovery-concurrency 1 \
+            --registry /tmp/copybot-smoke-registry.json \
+            --journal /tmp/copybot-smoke.jsonl || FAIL=1
+
+          if [ ! -s /tmp/copybot-smoke-registry.json ] || [ ! -f /tmp/copybot-smoke.jsonl ]; then
+            echo "STATUS public-paper-smoke-state FAIL" | tee -a verification.log
+            FAIL=1
+          else
+            echo "STATUS public-paper-smoke-state PASS" | tee -a verification.log
+          fi
 
           if grep -RInE '(0x[a-fA-F0-9]{64}|PRIVATE_KEY=[^[:space:]]+|BEGIN (RSA |EC )?PRIVATE KEY)' . \
             --exclude-dir=.git --exclude-dir=target --exclude=verification.log --exclude=copybot-ci.yml; then
@@ -80,9 +94,12 @@ jobs:
             Cargo.lock
             README.md
             .env.example
+            RUNBOOK_LOCAL_AGENT.md
             src/
             tests/
             docs/
             verification.log
             /tmp/copybot-smoke.jsonl
+            /tmp/copybot-smoke-registry.json
+            /tmp/copybot-smoke-registry.runtime.json
           retention-days: 3
